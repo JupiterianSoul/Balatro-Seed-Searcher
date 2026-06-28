@@ -29,6 +29,12 @@ pub enum Clause {
     VoucherIs { ante: u8, voucher: String },
     /// Pack contents — "ante N pack P contains card X"
     AntePackContains { ante: u8, pack_index: u8, card: String },
+    /// "In ante N, ANY of the first `max_packs` shop packs contains card X."
+    /// Use this instead of a fan-out of AntePackContains clauses: opens packs
+    /// 0..max_packs once per seed and short-circuits, which is both faster and
+    /// correct (multiple AntePackContains in one filter would each restart the
+    /// shop-pack chain from 0, double-advancing the cached Instance state).
+    AnteAnyPackContains { ante: u8, max_packs: u8, card: String },
     /// Disjunction: passes iff any sub-clause passes. Sub-clauses share the
     /// same Instance state (so e.g. checking the same joker across antes 1..8
     /// advances the shop draw sequence naturally). Counts as ONE clause
@@ -62,6 +68,7 @@ pub enum Op {
     BossIs { ante: u8, boss_id: u16 },
     VoucherIs { ante: u8, voucher_id: u16 },
     PackContains { ante: u8, pack_index: u8, card_id: u16 },
+    AnyPackContains { ante: u8, max_packs: u8, card_id: u16 },
     /// Disjunction. Sub-ops share Instance state with the parent evaluation.
     AnyOf { ops: Vec<Op> },
 }
@@ -92,6 +99,8 @@ fn compile_clause(c: &Clause) -> Op {
             Op::VoucherIs { ante: *ante, voucher_id: voucher_name_to_id(voucher) },
         Clause::AntePackContains { ante, pack_index, card } =>
             Op::PackContains { ante: *ante, pack_index: *pack_index, card_id: card_name_to_id(card) },
+        Clause::AnteAnyPackContains { ante, max_packs, card } =>
+            Op::AnyPackContains { ante: *ante, max_packs: *max_packs, card_id: card_name_to_id(card) },
         Clause::AnyOf { clauses } =>
             Op::AnyOf { ops: clauses.iter().map(compile_clause).collect() },
     }

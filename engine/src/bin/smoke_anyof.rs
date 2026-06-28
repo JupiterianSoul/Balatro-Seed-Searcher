@@ -69,4 +69,36 @@ fn main() {
         },
         500_000, false, 0,
     );
+
+    // Soul gating: "The Soul appears in any of the first 6 packs in ante 1..8".
+    // Soul rate is ~0.3% per soulable card draw, so over 8 antes × 6 packs × a
+    // few soulable cards each, expected hit rate is on the order of single-
+    // digit percent. Confirm we do find seeds — the pre-fix V2 returned 0.
+    run(
+        "legendary gate: Soul in any pack ante 1..8",
+        Filter {
+            clauses: vec![Clause::AnyOf {
+                clauses: (1..=8).map(|a| Clause::AnteAnyPackContains {
+                    ante: a, max_packs: 6, card: "The Soul".into(),
+                }).collect(),
+            }],
+            partial: false, min_score: None,
+        },
+        100_000, false, 0,
+    );
+
+    // Wraith gating — spectral pack, rarer than Soul because spectral pack
+    // weight is low. Sanity-check non-zero.
+    run(
+        "wraith gate: Wraith in any pack ante 1..8",
+        Filter {
+            clauses: vec![Clause::AnyOf {
+                clauses: (1..=8).map(|a| Clause::AnteAnyPackContains {
+                    ante: a, max_packs: 6, card: "Wraith".into(),
+                }).collect(),
+            }],
+            partial: false, min_score: None,
+        },
+        100_000, false, 0,
+    );
 }

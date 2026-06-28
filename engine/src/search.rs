@@ -105,13 +105,17 @@ fn eval_op(inst: &mut Instance, op: &Op) -> bool {
         Op::PackContains { ante, pack_index, card_id } => {
             // Open the (ante, pack_index)-th pack in shop ante `ante`
             // and check whether the requested card appears inside.
+            // Uses a FRESH Instance so the ShopPack + per-card chains for
+            // this ante start at step 0, regardless of what earlier ops did
+            // to the shared instance's node cache.
+            let mut sub = Instance::new(inst.seed_str());
             let want = *card_id;
             let mut found = false;
             let mut last_pack: &'static str = "";
             for _ in 0..=*pack_index {
-                last_pack = next_pack(inst, *ante as i32);
+                last_pack = next_pack(&mut sub, *ante as i32);
             }
-            let contents = open_pack(inst, last_pack, *ante as i32);
+            let contents = open_pack(&mut sub, last_pack, *ante as i32);
             let items: &[&'static str] = match &contents {
                 PackContents::Tarots(v) | PackContents::Planets(v) |
                 PackContents::Spectrals(v) | PackContents::Jokers(v) => v.as_slice(),
@@ -122,6 +126,32 @@ fn eval_op(inst: &mut Instance, op: &Op) -> bool {
                     found = true;
                     break;
                 }
+            }
+            found
+        }
+        Op::AnyPackContains { ante, max_packs, card_id } => {
+            // Scan the first `max_packs` shop packs of `ante` on a fresh
+            // Instance — ShopPack and per-pack-content chains advance
+            // naturally within this scan and don't pollute the parent
+            // Instance's node cache.
+            let mut sub = Instance::new(inst.seed_str());
+            let want = *card_id;
+            let mut found = false;
+            for _ in 0..*max_packs {
+                let pack = next_pack(&mut sub, *ante as i32);
+                let contents = open_pack(&mut sub, pack, *ante as i32);
+                let items: &[&'static str] = match &contents {
+                    PackContents::Tarots(v) | PackContents::Planets(v) |
+                    PackContents::Spectrals(v) | PackContents::Jokers(v) => v.as_slice(),
+                    PackContents::Standard | PackContents::Unknown => &[],
+                };
+                for it in items {
+                    if crate::filter::stable_hash16_u16(it) == want {
+                        found = true;
+                        break;
+                    }
+                }
+                if found { break; }
             }
             found
         }
