@@ -12,6 +12,7 @@
 //! Ported verbatim from Immolate's lib/cache.cl + lib/instance.cl.
 
 use crate::rng::{pseudohash, LuaRandom};
+use std::collections::BTreeSet;
 
 /// All RNG sources the game uses (which "key" prefix is hashed).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,13 +150,24 @@ struct Node {
 const CACHE_SIZE: usize = 64;
 
 /// Per-run game instance. Holds the hashed seed, the RNG state machine,
-/// and the node cache.
+/// the node cache, and the lock state set used by `randchoice_common` to
+/// drive the resample loop.
 pub struct Instance {
     seed_string: heapless8::Buf,
     hashed_seed: f64,
     rng: LuaRandom,
     nodes: [Option<Node>; CACHE_SIZE],
     next_free: usize,
+    /// Items currently locked. Mirrors Immolate's `locked[]` array; only the
+    /// items that have been touched are stored, which keeps memory tiny while
+    /// matching the same resample semantics. Initial profile/run locks are
+    /// applied via `apply_default_locks`.
+    locked: BTreeSet<&'static str>,
+    /// When true, locked items don't trigger a resample (Showman joker effect).
+    /// Defaults to false; the search loop opts in per filter when needed.
+    pub showman: bool,
+    /// Stake of the run — controls sticker rolls. Defaults to White (no stickers).
+    pub stake: crate::state::Stake,
 }
 
 impl Instance {
@@ -170,7 +182,47 @@ impl Instance {
             rng,
             nodes: [None; CACHE_SIZE],
             next_free: 0,
+            locked: BTreeSet::new(),
+            showman: false,
+            stake: crate::state::Stake::White,
         }
+    }
+
+    /// Lock an item so the next `randchoice_common` will resample past it.
+    /// Used by pack openers during their temporary-lock loop.
+    #[inline]
+    pub fn lock(&mut self, item: &'static str) { self.locked.insert(item); }
+
+    /// Unlock an item. Pack openers call this after they finish their
+    /// temporary-lock loop so subsequent calls see a clean slate.
+    #[inline]
+    pub fn unlock(&mut self, item: &'static str) { self.locked.remove(item); }
+
+    /// Is this item currently locked? `false` when `showman` is on.
+    #[inline]
+    pub fn is_locked(&self, item: &str) -> bool {
+        if self.showman { return false; }
+        self.locked.contains(item)
+    }
+
+    /// Apply per-ante boss / tag unlocks. Mirrors Immolate's `init_locks` for
+    /// the bits that matter to a deterministic seed search: bosses gated
+    /// behind ante 2/3/4/5/6.
+    pub fn apply_ante_locks(&mut self, ante: i32) {
+        // Boss blinds gated behind antes
+        if ante < 2 {
+            for b in &["The Mouth", "The Fish", "The Wall", "The House", "The Mark",
+                       "The Wheel", "The Arm", "The Water", "The Needle", "The Flint"] {
+                self.locked.insert(b);
+            }
+        }
+        if ante < 3 {
+            self.locked.insert("The Tooth");
+            self.locked.insert("The Eye");
+        }
+        if ante < 4 { self.locked.insert("The Plant"); }
+        if ante < 5 { self.locked.insert("The Serpent"); }
+        if ante < 6 { self.locked.insert("The Ox"); }
     }
 
     pub fn seed_str(&self) -> &str { self.seed_string.as_str() }
@@ -227,6 +279,56 @@ impl Instance {
         self.rng = LuaRandom::from_seed(s);
         let idx = (self.rng.next_double() * items.len() as f64).floor() as usize;
         items[idx.min(items.len() - 1)]
+    }
+
+    /// `randchoice_common(items)` — the lock-aware draw used by jokers, tarots,
+    /// planets, spectrals. If the rolled item is locked, resamples with an
+    /// incrementing `resample` suffix until an unlocked item is found.
+    /// Mirrors `instance.cl::randchoice_common`.
+    pub fn rand_choice_common(
+        &mut self,
+        kind: RandomType,
+        source: RandomSource,
+        ante: i32,
+        items: &[&'static str],
+    ) -> &'static str {
+        let key = NodeKey::with_ante(kind, source, ante);
+        let mut pick = self.rand_choice(key, items);
+        if !self.showman && self.locked.contains(pick) {
+            let mut resample_n: u32 = 1;
+            // Bounded by item pool size — we can't have more resamples than items.
+            // Add a hard cap of items.len() * 4 as a safety net (matches Immolate's
+            // worst-case behaviour where it would loop forever on a fully-locked pool).
+            let cap = (items.len() as u32) * 4 + 8;
+            while self.locked.contains(pick) && resample_n < cap {
+                let rk = NodeKey::with_resample(kind, source, ante, resample_n);
+                pick = self.rand_choice(rk, items);
+                resample_n += 1;
+            }
+        }
+        pick
+    }
+
+    /// `randweightedchoice(items)` — weighted draw used for booster pack types.
+    /// `total_weight` is the sum of every weight in `items`; the caller passes
+    /// it explicitly so we don't recompute it per call.
+    pub fn rand_weighted_choice(
+        &mut self,
+        key: NodeKey,
+        items: &[(&'static str, f64)],
+        total_weight: f64,
+    ) -> &'static str {
+        debug_assert!(!items.is_empty());
+        let s = self.get_node(key);
+        self.rng = LuaRandom::from_seed(s);
+        let poll = self.rng.next_double() * total_weight;
+        let mut acc = 0.0;
+        for (item, w) in items {
+            acc += *w;
+            if acc >= poll { return item; }
+        }
+        // Floating-point edge case — fall back to last.
+        items[items.len() - 1].0
     }
 }
 

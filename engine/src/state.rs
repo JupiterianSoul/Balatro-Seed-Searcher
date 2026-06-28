@@ -24,8 +24,21 @@ pub enum Deck {
     Checkered, Zodiac, Painted, Anaglyph, Plasma, Erratic,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stake { White, Red, Green, Black, Blue, Purple, Orange, Gold }
+/// Stakes in ascending difficulty order. The discriminants are used by the
+/// sticker-roll logic to gate eternal/perishable/rental drops (e.g. eternal
+/// requires Black stake or higher).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum Stake {
+    White = 1,
+    Red = 2,
+    Green = 3,
+    Black = 4,
+    Blue = 5,
+    Purple = 6,
+    Orange = 7,
+    Gold = 8,
+}
 
 #[derive(Clone, Debug)]
 pub struct RunConfig {

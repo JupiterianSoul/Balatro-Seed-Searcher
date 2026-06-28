@@ -4,7 +4,10 @@
 //! counts matches and ranks by score. Filter clauses are pre-compiled into
 //! bytecode (`filter::Op`) and run in selectivity order.
 
-use crate::derive::{next_boss, next_joker, next_joker_edition, next_tag, next_voucher, Edition};
+use crate::derive::{
+    next_boss, next_joker, next_joker_edition, next_pack, next_tag, next_voucher,
+    open_pack, Edition, PackContents,
+};
 use crate::filter::{Compiled, Op};
 use crate::instance::{Instance, RandomSource};
 use crate::seed::Seed;
@@ -88,12 +91,30 @@ impl<'a> Searcher<'a> {
                     let drawn = next_voucher(&mut inst, *ante as i32);
                     crate::filter::stable_hash16_u16(drawn) == *voucher_id
                 }
-                Op::PackContains { .. } => {
-                    // Pack-contents simulation needs the lock state machine.
-                    // Marked TODO in the readme; the bytecode is wired but the
-                    // predicate returns false for now so users get an honest
-                    // "not yet matched" rather than a wrong match.
-                    false
+                Op::PackContains { ante, pack_index, card_id } => {
+                    // Open the (ante, pack_index)-th pack in shop ante `ante`
+                    // and check whether the requested card appears inside.
+                    // pack_index=0 → first pack of the shop.
+                    let want = *card_id;
+                    let mut found = false;
+                    // Draw `pack_index + 1` packs so we land on the requested slot
+                    let mut last_pack: &'static str = "";
+                    for _ in 0..=*pack_index {
+                        last_pack = next_pack(&mut inst, *ante as i32);
+                    }
+                    let contents = open_pack(&mut inst, last_pack, *ante as i32);
+                    let items: &[&'static str] = match &contents {
+                        PackContents::Tarots(v) | PackContents::Planets(v) |
+                        PackContents::Spectrals(v) | PackContents::Jokers(v) => v.as_slice(),
+                        PackContents::Standard | PackContents::Unknown => &[],
+                    };
+                    for it in items {
+                        if crate::filter::stable_hash16_u16(it) == want {
+                            found = true;
+                            break;
+                        }
+                    }
+                    found
                 }
             };
             if hit { score += 1; }
