@@ -29,6 +29,11 @@ pub enum Clause {
     VoucherIs { ante: u8, voucher: String },
     /// Pack contents — "ante N pack P contains card X"
     AntePackContains { ante: u8, pack_index: u8, card: String },
+    /// Disjunction: passes iff any sub-clause passes. Sub-clauses share the
+    /// same Instance state (so e.g. checking the same joker across antes 1..8
+    /// advances the shop draw sequence naturally). Counts as ONE clause
+    /// toward total_clauses / score.
+    AnyOf { clauses: Vec<Clause> },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -57,31 +62,38 @@ pub enum Op {
     BossIs { ante: u8, boss_id: u16 },
     VoucherIs { ante: u8, voucher_id: u16 },
     PackContains { ante: u8, pack_index: u8, card_id: u16 },
+    /// Disjunction. Sub-ops share Instance state with the parent evaluation.
+    AnyOf { ops: Vec<Op> },
 }
 
 impl Filter {
     /// Naive compile that preserves declared order. The selectivity-based
     /// reorderer attaches in `compile_with_stats`.
     pub fn compile(&self) -> Compiled {
-        let ops = self.clauses.iter().map(|c| match c {
-            Clause::AnteShopHasJoker { ante, slot, joker, edition } =>
-                Op::HasJoker {
-                    ante: *ante,
-                    slot: *slot,
-                    joker_id: joker_name_to_id(joker),
-                    edition: edition.as_deref().map(edition_name_to_id),
-                },
-            Clause::AnteTagIs { ante, position, tag } =>
-                Op::TagIs { ante: *ante, position: *position, tag_id: tag_name_to_id(tag) },
-            Clause::AnteBossIs { ante, boss } =>
-                Op::BossIs { ante: *ante, boss_id: boss_name_to_id(boss) },
-            Clause::VoucherIs { ante, voucher } =>
-                Op::VoucherIs { ante: *ante, voucher_id: voucher_name_to_id(voucher) },
-            Clause::AntePackContains { ante, pack_index, card } =>
-                Op::PackContains { ante: *ante, pack_index: *pack_index, card_id: card_name_to_id(card) },
-        }).collect();
-
+        let ops = self.clauses.iter().map(compile_clause).collect();
         Compiled { ops, total_clauses: self.clauses.len() as u8 }
+    }
+}
+
+fn compile_clause(c: &Clause) -> Op {
+    match c {
+        Clause::AnteShopHasJoker { ante, slot, joker, edition } =>
+            Op::HasJoker {
+                ante: *ante,
+                slot: *slot,
+                joker_id: joker_name_to_id(joker),
+                edition: edition.as_deref().map(edition_name_to_id),
+            },
+        Clause::AnteTagIs { ante, position, tag } =>
+            Op::TagIs { ante: *ante, position: *position, tag_id: tag_name_to_id(tag) },
+        Clause::AnteBossIs { ante, boss } =>
+            Op::BossIs { ante: *ante, boss_id: boss_name_to_id(boss) },
+        Clause::VoucherIs { ante, voucher } =>
+            Op::VoucherIs { ante: *ante, voucher_id: voucher_name_to_id(voucher) },
+        Clause::AntePackContains { ante, pack_index, card } =>
+            Op::PackContains { ante: *ante, pack_index: *pack_index, card_id: card_name_to_id(card) },
+        Clause::AnyOf { clauses } =>
+            Op::AnyOf { ops: clauses.iter().map(compile_clause).collect() },
     }
 }
 

@@ -64,63 +64,76 @@ impl<'a> Searcher<'a> {
         let mut score: u8 = 0;
 
         for op in &self.filter.ops {
-            let hit = match op {
-                Op::HasJoker { ante, slot: _, joker_id, edition } => {
-                    // First slot only for now — multi-slot shop modelling lands
-                    // with the full voucher chain. For the slot-0 case this is exact.
-                    let drawn = next_joker(&mut inst, RandomSource::Shop, *ante as i32);
-                    let name_match = crate::filter::stable_hash16_u16(drawn) == *joker_id;
-                    let edition_match = match edition {
-                        None => true,
-                        Some(want) => {
-                            let drawn_edition = next_joker_edition(&mut inst, RandomSource::Shop, *ante as i32);
-                            edition_idx(drawn_edition) == *want
-                        }
-                    };
-                    name_match && edition_match
-                }
-                Op::TagIs { ante, position: _, tag_id } => {
-                    let drawn = next_tag(&mut inst, *ante as i32);
-                    crate::filter::stable_hash16_u16(drawn) == *tag_id
-                }
-                Op::BossIs { ante, boss_id } => {
-                    let drawn = next_boss(&mut inst, *ante as i32);
-                    crate::filter::stable_hash16_u16(drawn) == *boss_id
-                }
-                Op::VoucherIs { ante, voucher_id } => {
-                    let drawn = next_voucher(&mut inst, *ante as i32);
-                    crate::filter::stable_hash16_u16(drawn) == *voucher_id
-                }
-                Op::PackContains { ante, pack_index, card_id } => {
-                    // Open the (ante, pack_index)-th pack in shop ante `ante`
-                    // and check whether the requested card appears inside.
-                    // pack_index=0 → first pack of the shop.
-                    let want = *card_id;
-                    let mut found = false;
-                    // Draw `pack_index + 1` packs so we land on the requested slot
-                    let mut last_pack: &'static str = "";
-                    for _ in 0..=*pack_index {
-                        last_pack = next_pack(&mut inst, *ante as i32);
-                    }
-                    let contents = open_pack(&mut inst, last_pack, *ante as i32);
-                    let items: &[&'static str] = match &contents {
-                        PackContents::Tarots(v) | PackContents::Planets(v) |
-                        PackContents::Spectrals(v) | PackContents::Jokers(v) => v.as_slice(),
-                        PackContents::Standard | PackContents::Unknown => &[],
-                    };
-                    for it in items {
-                        if crate::filter::stable_hash16_u16(it) == want {
-                            found = true;
-                            break;
-                        }
-                    }
-                    found
-                }
-            };
+            let hit = eval_op(&mut inst, op);
             if hit { score += 1; }
             else if !self.partial { return score; }
         }
         score
+    }
+}
+
+/// Evaluate a single op against an Instance. Recursive so AnyOf can call back
+/// into eval_op for its children, all sharing the same Instance state.
+fn eval_op(inst: &mut Instance, op: &Op) -> bool {
+    match op {
+        Op::HasJoker { ante, slot: _, joker_id, edition } => {
+            // First slot only for now — multi-slot shop modelling lands
+            // with the full voucher chain. For the slot-0 case this is exact.
+            let drawn = next_joker(inst, RandomSource::Shop, *ante as i32);
+            let name_match = crate::filter::stable_hash16_u16(drawn) == *joker_id;
+            let edition_match = match edition {
+                None => true,
+                Some(want) => {
+                    let drawn_edition = next_joker_edition(inst, RandomSource::Shop, *ante as i32);
+                    edition_idx(drawn_edition) == *want
+                }
+            };
+            name_match && edition_match
+        }
+        Op::TagIs { ante, position: _, tag_id } => {
+            let drawn = next_tag(inst, *ante as i32);
+            crate::filter::stable_hash16_u16(drawn) == *tag_id
+        }
+        Op::BossIs { ante, boss_id } => {
+            let drawn = next_boss(inst, *ante as i32);
+            crate::filter::stable_hash16_u16(drawn) == *boss_id
+        }
+        Op::VoucherIs { ante, voucher_id } => {
+            let drawn = next_voucher(inst, *ante as i32);
+            crate::filter::stable_hash16_u16(drawn) == *voucher_id
+        }
+        Op::PackContains { ante, pack_index, card_id } => {
+            // Open the (ante, pack_index)-th pack in shop ante `ante`
+            // and check whether the requested card appears inside.
+            let want = *card_id;
+            let mut found = false;
+            let mut last_pack: &'static str = "";
+            for _ in 0..=*pack_index {
+                last_pack = next_pack(inst, *ante as i32);
+            }
+            let contents = open_pack(inst, last_pack, *ante as i32);
+            let items: &[&'static str] = match &contents {
+                PackContents::Tarots(v) | PackContents::Planets(v) |
+                PackContents::Spectrals(v) | PackContents::Jokers(v) => v.as_slice(),
+                PackContents::Standard | PackContents::Unknown => &[],
+            };
+            for it in items {
+                if crate::filter::stable_hash16_u16(it) == want {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        }
+        Op::AnyOf { ops } => {
+            // Short-circuit OR. Sub-ops share Instance state; since
+            // rand_choice_common is keyed by (kind, source, ante) and cached,
+            // call order doesn't affect results.
+            for sub in ops {
+                if eval_op(inst, sub) { return true; }
+            }
+            false
+        }
     }
 }
 
