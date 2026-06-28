@@ -119,6 +119,11 @@ what isn't**, while building toward the fastest correct browser seed
 finder. If you spot a determinism mismatch with the game, please open
 an issue with the seed + filter + observed vs expected.
 
+## Docs
+
+- [Architecture](docs/architecture.md) — the four layers, RNG details, why the pseudohash needs the int/fract split.
+- [Comparison vs Balatropedia's current finder](docs/comparison.md) — honest side-by-side, including the six gaps still to close.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
