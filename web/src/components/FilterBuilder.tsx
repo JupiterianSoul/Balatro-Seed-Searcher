@@ -9,6 +9,7 @@ import type {
   ClauseAntePackContains,
 } from '../types';
 import { PRESETS } from '../presets';
+import { Combobox } from './Combobox';
 
 // ─── Game data lists ─────────────────────────────────────────────────────────
 
@@ -139,14 +140,13 @@ function ShopHasJokerEditor({ clause, onChange }: ClauseEditorProps<ClauseAnteSh
         ))}
       </select>
       <label className="clause-label">Joker</label>
-      <select
-        className="input-select input-select--wide"
+      <Combobox
         value={clause.joker}
-        onChange={e => onChange({ ...clause, joker: e.target.value })}
-        aria-label="Joker"
-      >
-        {JOKERS.map(j => <option key={j} value={j}>{j}</option>)}
-      </select>
+        options={JOKERS}
+        onChange={v => onChange({ ...clause, joker: v })}
+        ariaLabel="Joker"
+        placeholder="Search joker…"
+      />
       <label className="clause-label">Edition</label>
       <select
         className="input-select"
@@ -174,14 +174,13 @@ function TagIsEditor({ clause, onChange }: ClauseEditorProps<ClauseAnteTagIs>) {
         {[0, 1].map(p => <option key={p} value={p}>Tag {p + 1}</option>)}
       </select>
       <label className="clause-label">Tag</label>
-      <select
-        className="input-select input-select--wide"
+      <Combobox
         value={clause.tag}
-        onChange={e => onChange({ ...clause, tag: e.target.value })}
-        aria-label="Tag"
-      >
-        {TAGS.map(t => <option key={t} value={t}>{t}</option>)}
-      </select>
+        options={TAGS}
+        onChange={v => onChange({ ...clause, tag: v })}
+        ariaLabel="Tag"
+        placeholder="Search tag…"
+      />
     </>
   );
 }
@@ -191,14 +190,13 @@ function BossIsEditor({ clause, onChange }: ClauseEditorProps<ClauseAnteBossIs>)
     <>
       <AnteSelect value={clause.ante} onChange={v => onChange({ ...clause, ante: v })} />
       <label className="clause-label">Boss</label>
-      <select
-        className="input-select input-select--wide"
+      <Combobox
         value={clause.boss}
-        onChange={e => onChange({ ...clause, boss: e.target.value })}
-        aria-label="Boss"
-      >
-        {BOSSES.map(b => <option key={b} value={b}>{b}</option>)}
-      </select>
+        options={BOSSES}
+        onChange={v => onChange({ ...clause, boss: v })}
+        ariaLabel="Boss"
+        placeholder="Search boss…"
+      />
     </>
   );
 }
@@ -208,14 +206,13 @@ function VoucherIsEditor({ clause, onChange }: ClauseEditorProps<ClauseVoucherIs
     <>
       <AnteSelect value={clause.ante} onChange={v => onChange({ ...clause, ante: v })} />
       <label className="clause-label">Voucher</label>
-      <select
-        className="input-select input-select--wide"
+      <Combobox
         value={clause.voucher}
-        onChange={e => onChange({ ...clause, voucher: e.target.value })}
-        aria-label="Voucher"
-      >
-        {VOUCHERS.map(v => <option key={v} value={v}>{v}</option>)}
-      </select>
+        options={VOUCHERS}
+        onChange={v => onChange({ ...clause, voucher: v })}
+        ariaLabel="Voucher"
+        placeholder="Search voucher…"
+      />
     </>
   );
 }
@@ -234,14 +231,13 @@ function PackContainsEditor({ clause, onChange }: ClauseEditorProps<ClauseAntePa
         {[0, 1, 2, 3].map(p => <option key={p} value={p}>Pack {p + 1}</option>)}
       </select>
       <label className="clause-label">Card</label>
-      <select
-        className="input-select input-select--wide"
+      <Combobox
         value={clause.card}
-        onChange={e => onChange({ ...clause, card: e.target.value })}
-        aria-label="Card"
-      >
-        {CARDS.map(c => <option key={c} value={c}>{c}</option>)}
-      </select>
+        options={CARDS}
+        onChange={v => onChange({ ...clause, card: v })}
+        ariaLabel="Card"
+        placeholder="Search card…"
+      />
     </>
   );
 }
@@ -388,7 +384,71 @@ export function FilterBuilder({ filter, onChange }: FilterBuilderProps) {
 
       <div className="clause-list">
         {filter.clauses.length === 0 && (
-          <p className="empty-hint">No clauses yet. Add one below to start filtering.</p>
+          <div className="empty-state">
+            <p className="empty-hint">
+              Pick what you want the seed to roll. Each button adds a clause you can edit.
+            </p>
+            <div className="empty-cta-row">
+              <button
+                className="btn btn--primary btn--add-inline"
+                onClick={addClause}
+                title="Specific joker in a shop slot (ante 1-8, slot 1-5, edition)"
+              >
+                + Joker in shop
+              </button>
+              <button
+                className="btn btn--secondary btn--add-inline"
+                onClick={() =>
+                  onChange({
+                    ...filter,
+                    clauses: [...filter.clauses, defaultClause('voucher_is')],
+                  })
+                }
+                title="Voucher at a given ante"
+              >
+                + Voucher
+              </button>
+              <button
+                className="btn btn--secondary btn--add-inline"
+                onClick={() =>
+                  onChange({
+                    ...filter,
+                    clauses: [...filter.clauses, defaultClause('ante_tag_is')],
+                  })
+                }
+                title="Specific tag at a given ante / position"
+              >
+                + Tag
+              </button>
+              <button
+                className="btn btn--secondary btn--add-inline"
+                onClick={() =>
+                  onChange({
+                    ...filter,
+                    clauses: [...filter.clauses, defaultClause('ante_boss_is')],
+                  })
+                }
+                title="Boss blind at a given ante"
+              >
+                + Boss
+              </button>
+              <button
+                className="btn btn--secondary btn--add-inline"
+                onClick={() =>
+                  onChange({
+                    ...filter,
+                    clauses: [...filter.clauses, defaultClause('ante_pack_contains')],
+                  })
+                }
+                title="Tarot / Spectral / Planet card inside a booster pack"
+              >
+                + Pack card
+              </button>
+            </div>
+            <p className="empty-hint empty-hint--small">
+              Or load a preset from the dropdown above.
+            </p>
+          </div>
         )}
         {filter.clauses.map((clause, i) => (
           <ClauseRow
@@ -401,9 +461,11 @@ export function FilterBuilder({ filter, onChange }: FilterBuilderProps) {
         ))}
       </div>
 
-      <button className="btn btn--secondary btn--add" onClick={addClause}>
-        + Add clause
-      </button>
+      {filter.clauses.length > 0 && (
+        <button className="btn btn--secondary btn--add" onClick={addClause}>
+          + Add clause
+        </button>
+      )}
 
       <div className="filter-options">
         <label className="toggle-label">

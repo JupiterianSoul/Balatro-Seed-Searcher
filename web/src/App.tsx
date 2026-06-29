@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { FilterBuilder } from './components/FilterBuilder';
 import { ResultsPanel } from './components/ResultsPanel';
 import { SearchOrchestrator, DEFAULT_SEARCH_SPACE } from './search/orchestrator';
+import { assetPath } from './engine/assetPath';
 import type { Filter, SearchConfig, MatchRecord } from './types';
 import { DECK_NAMES, STAKE_NAMES } from './types';
 import './styles.css';
@@ -148,8 +149,8 @@ export default function App(): React.JSX.Element {
         typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true
         && typeof SharedArrayBuffer !== 'undefined';
       const urls: string[] = [];
-      if (canThread) urls.push('/engine-threads/balatro_seed_engine_bg.wasm');
-      urls.push(simd ? '/engine-simd/balatro_seed_engine_bg.wasm' : '/engine/balatro_seed_engine_bg.wasm');
+      if (canThread) urls.push(assetPath('engine-threads/balatro_seed_engine_bg.wasm'));
+      urls.push(simd ? assetPath('engine-simd/balatro_seed_engine_bg.wasm') : assetPath('engine/balatro_seed_engine_bg.wasm'));
       for (const url of urls) {
         if (cancelled) return;
         try {
@@ -176,12 +177,12 @@ export default function App(): React.JSX.Element {
     (async () => {
       try {
         const simd = await detectSimd();
-        const basePath = simd ? '/engine-simd' : '/engine';
+        const basePath = simd ? 'engine-simd' : 'engine';
         // Use runtime URL construction so Vite doesn't try to bundle the
         // public asset at build time.
         const origin = window.location.origin;
-        const jsUrl = new URL(`${basePath}/balatro_seed_engine.js`, origin).toString();
-        const wasmUrl = new URL(`${basePath}/balatro_seed_engine_bg.wasm`, origin).toString();
+        const jsUrl = new URL(assetPath(`${basePath}/balatro_seed_engine.js`), origin).toString();
+        const wasmUrl = new URL(assetPath(`${basePath}/balatro_seed_engine_bg.wasm`), origin).toString();
         const wasmJs = await import(/* @vite-ignore */ jsUrl) as {
           default: (opts?: { module_or_path?: string }) => Promise<unknown>;
           v3_diagnostic_cpu: (a: number, b: number, c: number) => Uint32Array;
@@ -504,7 +505,7 @@ export default function App(): React.JSX.Element {
       <footer className="app-footer">
         <div className="footer-inner">
           <a
-            href="https://github.com/user/Balatro-Seed-Searcher"
+            href="https://github.com/JupiterianSoul/Balatro-Seed-Searcher"
             target="_blank"
             rel="noopener noreferrer"
             className="footer-link"

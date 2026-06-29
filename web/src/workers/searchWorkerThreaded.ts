@@ -41,17 +41,21 @@ type ThreadedEngineModule = {
 // ─── Engine loading (with one-time cache) ────────────────────────────────────
 
 let enginePromise: Promise<ThreadedEngineModule> | null = null;
-const ENGINE_BASE = '/engine-threads';
+
+function assetUrl(rel: string): string {
+  const base = (import.meta.env.BASE_URL ?? '/').replace(/\/?$/, '/');
+  return base + rel.replace(/^\/+/, '');
+}
 
 async function getEngine(): Promise<ThreadedEngineModule> {
   if (!enginePromise) {
     enginePromise = (async () => {
-      const mod = (await import(/* @vite-ignore */ `${ENGINE_BASE}/balatro_seed_engine.js`)) as ThreadedEngineModule;
+      const mod = (await import(/* @vite-ignore */ assetUrl('engine-threads/balatro_seed_engine.js'))) as ThreadedEngineModule;
       // WebAssembly.instantiateStreaming is used under the hood when the
       // browser supports it and the response has the right MIME type — the
       // wasm-pack generated loader will pick that path automatically. We
       // simply hand it the URL.
-      await mod.default({ module_or_path: `${ENGINE_BASE}/balatro_seed_engine_bg.wasm` });
+      await mod.default({ module_or_path: assetUrl('engine-threads/balatro_seed_engine_bg.wasm') });
       mod.init();
 
       const threads = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 16));

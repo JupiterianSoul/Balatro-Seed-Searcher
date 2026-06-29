@@ -4,7 +4,9 @@ const crossOriginHeaders = {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Embedder-Policy': 'require-corp',
 };
+const base = process.env.BASE ?? '/';
 export default defineConfig({
+    base,
     plugins: [react()],
     optimizeDeps: {
         exclude: ['balatro-seed-engine'],

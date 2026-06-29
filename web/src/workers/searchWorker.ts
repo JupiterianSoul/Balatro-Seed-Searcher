@@ -31,12 +31,17 @@ function detectSimd(): boolean {
 
 let enginePromise: Promise<EngineModule> | null = null;
 
+function assetUrl(rel: string): string {
+  const base = (import.meta.env.BASE_URL ?? '/').replace(/\/?$/, '/');
+  return base + rel.replace(/^\/+/, '');
+}
+
 async function getEngine(): Promise<EngineModule> {
   if (!enginePromise) {
     enginePromise = (async () => {
       const simd = detectSimd();
-      const basePath = simd ? '/engine-simd' : '/engine';
-      const mod = await import(/* @vite-ignore */ `${basePath}/balatro_seed_engine.js`) as {
+      const basePath = simd ? 'engine-simd' : 'engine';
+      const mod = await import(/* @vite-ignore */ assetUrl(`${basePath}/balatro_seed_engine.js`)) as {
         default: (opts?: { module_or_path?: string }) => Promise<unknown>;
         init: () => void;
         scan_chunk: (
@@ -50,7 +55,7 @@ async function getEngine(): Promise<EngineModule> {
           min_score: number,
         ) => Uint8Array;
       };
-      await mod.default({ module_or_path: `${basePath}/balatro_seed_engine_bg.wasm` });
+      await mod.default({ module_or_path: assetUrl(`${basePath}/balatro_seed_engine_bg.wasm`) });
       mod.init();
       return { init: mod.init, scan_chunk: mod.scan_chunk };
     })();

@@ -41,9 +41,10 @@ let cached: LoadedEngine | null = null;
 export async function loadEngine(): Promise<LoadedEngine> {
   if (cached) return cached;
 
+  const { assetPath } = await import('./assetPath');
   const simd = detectSimd();
-  const basePath = simd ? '/engine-simd' : '/engine';
-  const scriptUrl = `${basePath}/balatro_seed_engine.js`;
+  const basePath = simd ? 'engine-simd' : 'engine';
+  const scriptUrl = assetPath(`${basePath}/balatro_seed_engine.js`);
 
   // Dynamically import the ES module. The WASM loader's default export
   // is an async init function; named exports include the actual API.
@@ -63,7 +64,7 @@ export async function loadEngine(): Promise<LoadedEngine> {
   };
 
   // Initialise the WASM binary (fetches the .wasm from same directory)
-  await mod.default({ module_or_path: `${basePath}/balatro_seed_engine_bg.wasm` });
+  await mod.default({ module_or_path: assetPath(`${basePath}/balatro_seed_engine_bg.wasm`) });
 
   // Call the Rust init function to seed the random tables
   mod.init();
