@@ -7,5 +7,6 @@ dist/
 .env.local
 engine/pkg/
 engine/pkg-simd/
+engine/pkg-threads/
 web/public/wasm/
 .vite/

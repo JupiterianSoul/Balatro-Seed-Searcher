@@ -1,5 +1,22 @@
 // Main-thread search orchestrator.
-// Spawns N workers (up to 8), partitions seed space, aggregates results.
+//
+// Two execution modes:
+//
+//   1. THREADED  — page is `crossOriginIsolated` and `SharedArrayBuffer`
+//                  exists. We spawn ONE `searchWorkerThreaded` that loads
+//                  the threads engine bundle and runs rayon inside the
+//                  WASM heap. The pool size is `hardwareConcurrency`.
+//                  This is the preferred mode on the deployed pplx.app site
+//                  (which sends COOP/COEP) and inside the Capacitor APK
+//                  once we wire the same headers in the WebViewClient.
+//
+//   2. FALLBACK  — anything else (no SAB, no COOP/COEP, file:// pages,
+//                  Capacitor without the right WebView config). We keep
+//                  the existing N-worker model where each worker holds a
+//                  separate WASM heap and partitions the seed range.
+//
+// The mode is decided once per `start()` call. Output messages from both
+// paths follow the same protocol so the rest of this class doesn't care.
 
 import type {
   Filter,
@@ -46,6 +63,7 @@ export class SearchOrchestrator {
   private running = false;
   private paused = false;
   private workerCount = 0;
+  private threadedMode = false;
 
   private progressInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -65,42 +83,74 @@ export class SearchOrchestrator {
     this.running = true;
     this.paused = false;
 
-    const concurrency = Math.min(navigator.hardwareConcurrency || 4, 8);
-    this.workerCount = concurrency;
+    // Decide execution mode. Threaded needs COOP/COEP cross-origin isolation
+    // plus SharedArrayBuffer. Both must be true; SAB without isolation is
+    // gated by browsers and rayon will fail to spawn workers.
+    const canThread =
+      typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true
+      && typeof SharedArrayBuffer !== 'undefined';
+    this.threadedMode = canThread;
 
-    // Partition seed space: worker i scans ranks i, i+n, i+2n, ...
-    // Each worker gets a contiguous slice for simplicity (lower overhead).
-    // Interleaved would be ideal but a big contiguous slice is fine for seed searching.
-    const sliceSize = this.searchSpace / BigInt(concurrency);
-
-    for (let i = 0; i < concurrency; i++) {
-      const worker = new Worker(new URL('../workers/searchWorker.ts', import.meta.url), {
+    if (canThread) {
+      // THREADED MODE — single worker, single WASM heap, rayon inside.
+      this.workerCount = 1;
+      const worker = new Worker(new URL('../workers/searchWorkerThreaded.ts', import.meta.url), {
         type: 'module',
       });
-
-      const startRank = BigInt(i) * sliceSize;
-      const count = i === concurrency - 1 ? this.searchSpace - startRank : sliceSize;
-
       worker.addEventListener('message', (event: MessageEvent<WorkerOutbound>) => {
         this.handleWorkerMessage(event.data);
       });
-
       const scanMsg: WorkerInboundScan = {
         type: 'scan',
         filter,
-        startRank,
-        count,
+        startRank: 0n,
+        count: this.searchSpace,
         seedLen: config.seedLen,
         deckIdx: config.deckIdx,
         stakeIdx: config.stakeIdx,
         partial: filter.partial,
         minScore: filter.min_score ?? 0,
-        workerId: i,
+        workerId: 0,
       };
-
       worker.postMessage(scanMsg);
       this.workers.push(worker);
-      this.workerScanned.set(i, 0n);
+      this.workerScanned.set(0, 0n);
+    } else {
+      // FALLBACK MODE — N separate workers, each with its own WASM heap.
+      const concurrency = Math.min(navigator.hardwareConcurrency || 4, 8);
+      this.workerCount = concurrency;
+
+      const sliceSize = this.searchSpace / BigInt(concurrency);
+
+      for (let i = 0; i < concurrency; i++) {
+        const worker = new Worker(new URL('../workers/searchWorker.ts', import.meta.url), {
+          type: 'module',
+        });
+
+        const startRank = BigInt(i) * sliceSize;
+        const count = i === concurrency - 1 ? this.searchSpace - startRank : sliceSize;
+
+        worker.addEventListener('message', (event: MessageEvent<WorkerOutbound>) => {
+          this.handleWorkerMessage(event.data);
+        });
+
+        const scanMsg: WorkerInboundScan = {
+          type: 'scan',
+          filter,
+          startRank,
+          count,
+          seedLen: config.seedLen,
+          deckIdx: config.deckIdx,
+          stakeIdx: config.stakeIdx,
+          partial: filter.partial,
+          minScore: filter.min_score ?? 0,
+          workerId: i,
+        };
+
+        worker.postMessage(scanMsg);
+        this.workers.push(worker);
+        this.workerScanned.set(i, 0n);
+      }
     }
 
     // Emit an immediate progress event so the UI starts ticking the moment
@@ -153,6 +203,15 @@ export class SearchOrchestrator {
 
   isPaused(): boolean {
     return this.paused;
+  }
+
+  /**
+   * Returns whether the current/last run used the threaded engine.
+   * Useful for showing a small "multi-core" badge in the UI so the user
+   * can tell whether their phone got the fast path.
+   */
+  isThreaded(): boolean {
+    return this.threadedMode;
   }
 
   getTopMatches(): MatchRecord[] {

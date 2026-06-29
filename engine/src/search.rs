@@ -40,6 +40,42 @@ pub struct Searcher<'a> {
 }
 
 impl<'a> Searcher<'a> {
+    /// Scan the range in parallel using rayon's global pool. Returns matches
+    /// in rank order. Each seed is independent (no shared mutable state in
+    /// `evaluate`) so this is a textbook map-reduce.
+    ///
+    /// Only available with the `wasm-threads` (or native `rayon`) feature.
+    /// Behaviour is bit-for-bit identical to the serial `scan` — the inputs
+    /// to every per-seed `evaluate` call are the same, just in non-linear
+    /// order of execution.
+    #[cfg(feature = "rayon")]
+    pub fn scan_parallel(&self, start_rank: u64, count: u64) -> Vec<Match>
+    where
+        Self: Sync,
+    {
+        use rayon::prelude::*;
+        // We chunk by 4096-seed slabs so each rayon job is big enough to
+        // amortise dispatch overhead but small enough to load-balance
+        // across cores. Chunks come back in order; per-chunk matches are
+        // emitted in rank order, so concatenating preserves global order.
+        const CHUNK: u64 = 4096;
+        let num_chunks = (count + CHUNK - 1) / CHUNK;
+        let chunk_results: Vec<Vec<Match>> = (0..num_chunks)
+            .into_par_iter()
+            .map(|i| {
+                let chunk_start = start_rank + i * CHUNK;
+                let chunk_count = (count - i * CHUNK).min(CHUNK);
+                let mut local: Vec<Match> = Vec::new();
+                self.scan(chunk_start, chunk_count, |m| local.push(m));
+                local
+            })
+            .collect();
+        let total: usize = chunk_results.iter().map(|v| v.len()).sum();
+        let mut out = Vec::with_capacity(total);
+        for v in chunk_results { out.extend(v); }
+        out
+    }
+
     /// Scan `[start_rank, start_rank + count)` and call `emit` for each hit.
     pub fn scan<F: FnMut(Match)>(&self, start_rank: u64, count: u64, mut emit: F) -> u64 {
         let mut seed = Seed::from_rank(start_rank, self.config.seed_len);
@@ -293,5 +329,135 @@ fn seal_idx(s: Seal) -> u8 {
     match s {
         Seal::None => 0, Seal::Red => 1, Seal::Blue => 2,
         Seal::Gold => 3, Seal::Purple => 4,
+    }
+}
+
+#[cfg(all(test, feature = "rayon"))]
+mod parity_tests {
+    //! These tests run only with `cargo test --release --features rayon`.
+    //!
+    //! They verify that `scan_parallel` returns *exactly* the same matches,
+    //! in the same rank order, with the same scores, as the serial `scan`.
+    //! This is the contract the WASM `scan_chunk_parallel` relies on.
+    use super::*;
+    use crate::filter::{Clause, Filter};
+    use crate::state::{Deck, Stake};
+    use std::collections::HashSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Once;
+    static POOL_INIT: Once = Once::new();
+    static POOL_OK: AtomicBool = AtomicBool::new(false);
+    fn ensure_pool() {
+        POOL_INIT.call_once(|| {
+            // Force a deterministic, modest pool size for CI/sandbox stability.
+            let res = rayon::ThreadPoolBuilder::new()
+                .num_threads(4)
+                .build_global();
+            POOL_OK.store(res.is_ok(), Ordering::SeqCst);
+        });
+        // If a prior test already built the global pool we still proceed —
+        // rayon will reject a second build but the existing pool is fine.
+    }
+    fn serial_collect(s: &Searcher, start: u64, count: u64) -> Vec<Match> {
+        let mut v = Vec::new();
+        s.scan(start, count, |m| v.push(m));
+        v
+    }
+    fn matches_eq(a: &[Match], b: &[Match]) -> bool {
+        if a.len() != b.len() { return false; }
+        for (x, y) in a.iter().zip(b.iter()) {
+            if x.seed != y.seed || x.rank != y.rank || x.score != y.score {
+                return false;
+            }
+        }
+        true
+    }
+    #[test]
+    fn parity_partial_voucher_ante1_10k() {
+        ensure_pool();
+        // A 1-clause partial filter — guarantees enough hits in 10k to
+        // really exercise the chunk-merge path.
+        let filter = Filter {
+            clauses: vec![Clause::VoucherIs { ante: 1, voucher: "Overstock".into() }],
+            partial: true,
+            min_score: Some(0),
+        };
+        let compiled = filter.compile();
+        let cfg = RunConfig { deck: Deck::Red, stake: Stake::White, seed: [0; 8], seed_len: 8 };
+        let s = Searcher { config: &cfg, filter: &compiled, partial: true, min_score: 0 };
+        let ser = serial_collect(&s, 0, 10_000);
+        let par = s.scan_parallel(0, 10_000);
+        assert_eq!(ser.len(), par.len(), "serial {} vs parallel {} match counts differ", ser.len(), par.len());
+        assert!(matches_eq(&ser, &par), "serial/parallel match lists differ in content or order");
+        // Sanity: should not be a degenerate (everything matches / nothing matches) case.
+        assert!(ser.len() == 10_000, "partial scan with min_score=0 should hit every seed");
+    }
+    #[test]
+    fn parity_strict_joker_ante1_50k() {
+        ensure_pool();
+        // Strict-AND filter — rejects most seeds, exercises early exit.
+        let filter = Filter {
+            clauses: vec![Clause::AnteShopHasJoker {
+                ante: 1, slot: 0, joker: "Blueprint".into(),
+                edition: None, sticker: None,
+            }],
+            partial: false,
+            min_score: None,
+        };
+        let compiled = filter.compile();
+        let cfg = RunConfig { deck: Deck::Red, stake: Stake::White, seed: [0; 8], seed_len: 8 };
+        let s = Searcher { config: &cfg, filter: &compiled, partial: false, min_score: 0 };
+        let ser = serial_collect(&s, 0, 50_000);
+        let par = s.scan_parallel(0, 50_000);
+        assert_eq!(ser.len(), par.len(),
+            "strict scan match counts differ: serial={} parallel={}", ser.len(), par.len());
+        assert!(matches_eq(&ser, &par), "strict scan parallel ordering or content differs");
+        // The set of seeds returned must also match exactly.
+        let ser_seeds: HashSet<&str> = ser.iter().map(|m| m.seed.as_str()).collect();
+        let par_seeds: HashSet<&str> = par.iter().map(|m| m.seed.as_str()).collect();
+        assert_eq!(ser_seeds, par_seeds, "seed sets differ");
+    }
+    #[test]
+    fn parity_mixed_partial_3clause_20k() {
+        ensure_pool();
+        // 3-clause partial — checks score field is also bit-for-bit identical.
+        let filter = Filter {
+            clauses: vec![
+                Clause::VoucherIs { ante: 1, voucher: "Overstock".into() },
+                Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None, sticker: None },
+                Clause::AnteBossIs { ante: 3, boss: "TheHook".into() },
+            ],
+            partial: true,
+            min_score: Some(1),
+        };
+        let compiled = filter.compile();
+        let cfg = RunConfig { deck: Deck::Red, stake: Stake::White, seed: [0; 8], seed_len: 8 };
+        let s = Searcher { config: &cfg, filter: &compiled, partial: true, min_score: 1 };
+        let ser = serial_collect(&s, 0, 20_000);
+        let par = s.scan_parallel(0, 20_000);
+        assert_eq!(ser.len(), par.len(),
+            "partial mixed scan counts differ: serial={} parallel={}", ser.len(), par.len());
+        assert!(matches_eq(&ser, &par),
+            "score or rank diverged between serial and parallel partial mixed scan");
+    }
+    #[test]
+    fn parity_offset_start_rank_5k() {
+        ensure_pool();
+        // Make sure a non-zero start_rank still produces identical output.
+        let filter = Filter {
+            clauses: vec![Clause::VoucherIs { ante: 1, voucher: "Overstock".into() }],
+            partial: false,
+            min_score: None,
+        };
+        let compiled = filter.compile();
+        let cfg = RunConfig { deck: Deck::Red, stake: Stake::White, seed: [0; 8], seed_len: 8 };
+        let s = Searcher { config: &cfg, filter: &compiled, partial: false, min_score: 0 };
+        let ser = serial_collect(&s, 100_000, 5_000);
+        let par = s.scan_parallel(100_000, 5_000);
+        assert_eq!(ser.len(), par.len());
+        assert!(matches_eq(&ser, &par), "offset-range serial vs parallel diverge");
+        for m in &par {
+            assert!(m.rank >= 100_000 && m.rank < 105_000, "rank {} out of expected range", m.rank);
+        }
     }
 }

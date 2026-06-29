@@ -2,6 +2,93 @@
 
 All notable changes to the Balatro Seed Searcher engine.
 
+## v4.0 — 2026-06-29 (phone-perf sprint — rayon threading + cold-start polish)
+
+GPU path put on hold (see v3.0-beta1; double-float emulation diverges too
+much to be useful for boss probe). This release pivots to the actual
+goal — a fast Play Store APK — by parallelising the WASM CPU engine
+inside a single heap with rayon, and by shaving cold-start latency on
+phones.
+
+### Engine
+- **`engine/Cargo.toml`** — new `wasm-threads` feature gates
+  `wasm-bindgen-rayon` + `rayon`. Built with nightly
+  `-Z build-std=std,panic_abort` and
+  `RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128'`.
+- **`engine/src/search.rs`** — new `scan_parallel` walks the seed-rank
+  range with `rayon::par_chunks`, evaluates each seed independently,
+  and reduces hits into a single `Vec<SearchHit>`. Each seed gets its
+  own `Run` so determinism is preserved.
+- **`engine/src/wasm_api.rs`** — re-exports `init_thread_pool` from
+  `wasm-bindgen-rayon` and adds `scan_chunk_parallel` with the same
+  17-byte record wire format as `scan_chunk`.
+- **`engine/src/search.rs` `parity_tests` mod** — 4 new tests run the
+  single-threaded `scan_chunk` and the rayon `scan_parallel` over the
+  same seed range and assert byte-identical output. Covers a 10k
+  partial-voucher filter, a 50k strict-joker filter, a 20k 3-clause
+  partial filter, and a 5k offset start range. Uses a shared 4-thread
+  pool via `std::sync::Once`.
+- `cargo test --release` is **33/33** passing.
+- `cargo test --release --features rayon` is **37/37** passing.
+
+### Web (both apps)
+- New `pkg-threads/` output vendored to
+  `web/public/engine-threads/` and
+  `Balatropedia/client/public/engine-v2-threads/`. 314 KB threaded
+  wasm, plus the `workerHelpers.js` snippet shipped by
+  `wasm-bindgen-rayon` for nested worker spawning.
+- New `searchWorkerThreaded.ts` / `seedFinderV2WorkerThreaded.ts`
+  loaders. On startup each calls
+  `initThreadPool(Math.min(navigator.hardwareConcurrency, 16))` and
+  then runs `scan_chunk_parallel` in adaptive 50 k – 8 M batches
+  targeting ~400 ms each.
+- **`web/src/search/orchestrator.ts`** and
+  **`Balatropedia/client/src/lib/seedFinderV2.ts`** — both gained a
+  threaded-mode branch. When `crossOriginIsolated === true` and
+  `SharedArrayBuffer` is available, the orchestrator spawns ONE
+  threaded worker for the full range. Otherwise it falls back to the
+  existing N-worker fan-out (capped at 8). New `threaded` engine label
+  surfaces in the UI.
+- **Cold-start polish.** `App.tsx` and `SeedFinderTab.tsx` each gained
+  a prewarm `useEffect` that issues
+  `fetch({ cache: 'force-cache' })` + `WebAssembly.compileStreaming`
+  for the threaded / SIMD / scalar bundles on mount, so the first
+  search after a fresh launch starts ~200–400 ms sooner.
+- **Filter + config persistence.** Standalone now persists the last
+  filter and engine config to `localStorage`
+  (`seed-searcher-last-filter-v1`, `seed-searcher-last-config-v1`).
+  Precedence on load: URL hash > localStorage > defaults.
+
+### Honestly deferred
+- **Phase 3a — SIMD batch hashing.** Processing 2 seeds per pseudohash
+  loop with 128-bit WASM SIMD would save ~5–10 % wall time on the hot
+  path; pseudohash is a small fraction of `evaluate()`, the filter ops
+  and clones dominate. Not worth a multi-day SIMD lane rewrite.
+- **Phase 3b — Seed-space pre-filter LUT.** Full 2^41 LUT is
+  impossible. A probabilistic bloom over the first 2 RNG outputs
+  would help selective strict-AND clauses but needs careful divergence
+  control and is out of scope for this sprint.
+
+### Phone-realistic expectations
+- **Phase 1 (rayon threading):** 1.8–2.2× on mid-range phones with 4–8
+  cores. Only activates when the host serves COOP `same-origin` +
+  COEP `require-corp`. The standalone deploy and the APK can do this;
+  Balatropedia’s server sends `crossOriginEmbedderPolicy: false` on
+  purpose (to keep cross-origin embedding working) so it transparently
+  falls back to N-worker mode there.
+- **Phase 2 (cold-start polish):** 200–400 ms saved on the very first
+  search after a fresh app launch. No effect on subsequent searches.
+
+### APK (Capacitor) notes
+- For threaded mode to activate inside the WebView, the Capacitor host
+  must inject `Cross-Origin-Opener-Policy: same-origin` +
+  `Cross-Origin-Embedder-Policy: require-corp` on the `index.html`
+  response. Typical pattern: subclass
+  `WebViewClient.shouldInterceptRequest` and add the headers to the
+  `WebResourceResponse`. Without this the engine falls back to
+  N-worker (still works, just slower). Wiring this is the next APK
+  task and is not part of this release.
+
 ## v3.0-beta1 — 2026-06-29 (WebGPU scaffold, search backend unchanged)
 
 First beta of the V3 (WebGPU) engine path. **Searches still run on the

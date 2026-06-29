@@ -12,6 +12,10 @@ crate-type = ["cdylib", "rlib"]
 default = []
 simd = []
 wasm = ["wasm-bindgen", "js-sys", "console_error_panic_hook"]
+# Enables wasm-bindgen-rayon + rayon. Requires nightly toolchain because
+# pthread-style WASM atomics still need `-Z build-std` for the wasm target.
+# Gracefully no-ops at the WASM API surface when not built.
+wasm-threads = ["wasm", "wasm-bindgen-rayon", "rayon", "getrandom"]
 
 [dependencies]
 wasm-bindgen = { version = "0.2", optional = true }
@@ -19,6 +23,10 @@ js-sys = { version = "0.3", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+rayon = { version = "1.10", optional = true }
+wasm-bindgen-rayon = { version = "1.2", optional = true }
+# wasm-bindgen-rayon transitively wants getrandom's wasm-bindgen backend.
+getrandom = { version = "0.2", optional = true, features = ["js"] }
 
 [profile.release]
 opt-level = 3

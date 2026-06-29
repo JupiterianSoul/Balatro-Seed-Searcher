@@ -64,6 +64,63 @@ pub fn scan_chunk(
     out
 }
 
+/// Parallel scan over `[start_rank, start_rank + count)`. Same output
+/// format as `scan_chunk`. Requires the host page to be cross-origin
+/// isolated (COOP/COEP) so `SharedArrayBuffer` is available; the JS
+/// caller must have invoked `initThreadPool(threadCount)` first.
+///
+/// Output is rank-ordered identically to the serial version. Determinism
+/// is preserved because each seed's evaluation is a pure function of the
+/// seed string + config.
+#[cfg(feature = "wasm-threads")]
+#[wasm_bindgen]
+pub fn scan_chunk_parallel(
+    filter_json: &str,
+    start_rank: u64,
+    count: u64,
+    seed_len: u8,
+    deck_idx: u8,
+    stake_idx: u8,
+    partial: bool,
+    min_score: u8,
+) -> Vec<u8> {
+    let filter: Filter = serde_json::from_str(filter_json).unwrap_or_default();
+    let compiled = filter.compile();
+
+    let config = RunConfig {
+        deck: deck_from_idx(deck_idx),
+        stake: stake_from_idx(stake_idx),
+        seed: [0; 8],
+        seed_len,
+    };
+
+    let s = Searcher {
+        config: &config,
+        filter: &compiled,
+        partial,
+        min_score,
+    };
+
+    let matches = s.scan_parallel(start_rank, count);
+    let mut out: Vec<u8> = Vec::with_capacity(matches.len() * 17);
+    for m in &matches {
+        out.extend_from_slice(&m.rank.to_le_bytes());
+        out.push(m.score);
+        let mut buf = [b' '; 8];
+        let b = m.seed.as_bytes();
+        buf[..b.len()].copy_from_slice(b);
+        out.extend_from_slice(&buf);
+    }
+    out
+}
+
+/// Re-export of `wasm_bindgen_rayon::init_thread_pool` so the JS host can
+/// call `import('balatro_seed_engine').initThreadPool(navigator.hardwareConcurrency)`
+/// before any `scan_chunk_parallel` invocation. Returns a promise that
+/// resolves once all worker threads have signalled ready.
+#[cfg(feature = "wasm-threads")]
+pub use wasm_bindgen_rayon::init_thread_pool;
+
 /// Inspect a single seed: run each filter clause and return a JSON report
 /// describing which clauses matched and where. Used by the "Verify a seed"
 /// UI panel.
