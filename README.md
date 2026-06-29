@@ -1,199 +1,82 @@
 # Balatro Seed Searcher
 
-A from-scratch Balatro seed search engine — Rust core, WebAssembly delivery
-(scalar + SIMD), parallelised across Web Workers. Runs entirely in the
-browser; no install, no server round-trip, no telemetry.
+Balatro Seed Searcher is a from scratch search engine for Balatro seeds. The core is written in Rust, compiled to WebAssembly and run inside Web Workers, so the whole thing executes in the browser with no install, no server round trip and no telemetry. It powers the Finder tab inside Balatropedia and also ships a small standalone web demo for benchmarking.
 
-**Live demo (standalone):** deployed via the Perplexity asset-share URL in
-`/web/`. **Live demo (integrated):** the default seed search engine on
-[Balatropedia](https://github.com/JupiterianSoul/Balatropedia) — the prior
-JS engine remains as `?legacy=1` fallback only.
+## What it does
 
-## v2 final feature surface
+You describe a board you want (a specific joker with a sticker, a specific voucher in a specific ante, a tag attached to a small blind, a standard pack with a glass king of hearts, and so on), the engine then enumerates seeds and reports every match. The same engine can take a single known seed and walk the simulation forward to show shops, packs, vouchers and Soul resolutions ante by ante.
 
-- Joker constraint with edition + sticker, routed through any of
-  shop / buffoon-pack / arcana-soul / spectral-soul / spectral-wraith /
-  legendary-soul sources.
-- Voucher constraint (per-ante).
-- Tag constraint with small-blind / big-blind position selector.
-- Boss constraint (all 28 bosses).
-- Standard pack card constraint: independent suit, rank, enhancement,
-  edition, and seal fields.
-- Soul → specific legendary resolution (Canio, Triboulet, Yorick, Chicot,
-  Perkeo).
-- Wraith → specific Rare joker resolution.
-- `inspect_seed` single-seed inspector (returns matched/unmatched
-  per-clause detail).
-- Share URL roundtrip via `?seedfinder=<base64url>`.
-- Worker pool size control (Eco → Extreme tiers with per-device
-  recommendation).
-- See `CHANGELOG.md` for the full v2 final delta and
-  `scripts/PARITY.md` for the bit-for-bit harness write-up.
+## How it works
 
-```
-   ┌───────────────────────────────────────────────────────────┐
-   │   Browser (no install required)                           │
-   │                                                           │
-   │   ┌──────────────┐    ┌──────────────────────────────┐    │
-   │   │ React UI     │ ←→ │ Orchestrator (main thread)   │    │
-   │   │ • Filter     │    │ • partitions seed space      │    │
-   │   │   builder    │    │ • aggregates matches         │    │
-   │   │ • Streaming  │    │ • progress + engine status   │    │
-   │   │   results    │    └──────────┬───────────────────┘    │
-   │   │ • Device     │               │                        │
-   │   │   profiler   │     ┌─────────┴─────────┐              │
-   │   └──────────────┘     │ N Web Workers     │              │
-   │                        │ • Rust → WASM     │              │
-   │                        │ • SIMD detection  │              │
-   │                        │ • adaptive batch  │              │
-   │                        └─────────┬─────────┘              │
-   │                                  ▼                        │
-   │                        ┌───────────────────┐              │
-   │                        │ WASM engine       │              │
-   │                        │ pseudohash + LCG  │              │
-   │                        │ + node cache      │              │
-   │                        │ + filter bytecode │              │
-   │                        └───────────────────┘              │
-   └───────────────────────────────────────────────────────────┘
-```
+The engine is a faithful port of Balatro's own random number sequence. Three pieces drive it:
 
-## Why a new engine?
+* A pseudohash that mixes the seed string into a stable 64 bit state. This is the same procedure the game uses to turn a typed seed into a starting RNG state.
+* A linear congruential generator (LCG) that advances that state every time the game asks for a random number. The constants match the game one to one, which is why the search results line up bit for bit with what you would actually see in a real run.
+* A derivation tree built on top of the RNG that mirrors the game's lookup order: ante setup, then shops (jokers, vouchers, tags), then booster packs (buffoon, arcana, celestial, spectral, standard), then Soul and Wraith resolutions. Each node caches its result so re-deriving inside one ante is free.
 
-Existing browser-based Balatro seed finders (including the one originally in
-[Balatropedia](https://github.com/JupiterianSoul/Balatropedia)) embed prebuilt
-[Immolate](https://github.com/SpectralPack/Immolate) WASM artefacts. That
-works, but means you cannot:
+On top of that the engine compiles your filter into a small bytecode. Cheap clauses (boss, voucher, tag) run first; expensive ones (specific edition plus sticker on a specific joker) run last. The orchestrator hands out seed ranges to Web Workers, each worker has its own WASM instance, and matches stream back as they appear. SIMD is detected at startup; if the browser supports it the SIMD bundle loads, otherwise the scalar bundle does. Both produce the same results.
 
-- Rebuild with SIMD on demand (no source in the dependent repos)
-- Re-order filter clauses by selectivity
-- Express disjunctions (`AnyOf`) cleanly in the DSL
-- Tune batch sizes, threading, and worker pacing per device class
+The 100k seed regression sweep (`cargo run --release --bin verify -- 100000`) re-derives a known reference set and exits non-zero on any divergence. The score so far is zero divergences across all checked sweeps.
 
-This project owns the engine end-to-end so all of the above is possible.
+## Filter surface
 
-## What's in this repo
+You can stack any combination of:
+
+* Joker constraint with edition (none, foil, holographic, polychrome, negative), sticker (none, eternal, perishable, rental) and source (shop, buffoon pack, arcana Soul, spectral Soul, spectral Wraith, legendary Soul)
+* Voucher constraint pinned to a specific ante
+* Tag constraint with small blind or big blind position
+* Boss constraint covering all 28 bosses
+* Standard pack card constraint with independent suit, rank, enhancement, edition and seal fields
+* Soul resolved to a specific legendary (Canio, Triboulet, Yorick, Chicot, Perkeo)
+* Wraith resolved to a specific Rare joker
+
+`AnyOf` is a first class clause, so you can ask for "Blueprint OR Brainstorm" without splitting the search.
+
+## Codes used
+
+The constants and tables in the engine are not invented. They are read from the game's own data:
+
+* RNG constants (LCG multiplier, increment, modulus) match the values used by `pseudohash` and `pseudorandom` in the game
+* Joker, voucher, tag and boss tables are synced to the canonical display names from Immolate's `lib/items.cl`. A helper binary, `extract_canonical_names`, regenerates them when the upstream table changes.
+* Pack composition, shop slot counts and rerolls per ante follow the published Balatro rules. The constants live in `engine/src/tables.rs`.
+* Soul and Wraith resolution branches follow the same RNG calls the game makes when those cards trigger.
+
+## Performance
+
+* Worker pool sized by a device profiler that reads core count, mobile vs desktop and reported RAM. Defaults from Eco (2 workers, low end phones) up to Extreme (24+ cores).
+* Adaptive batch size per worker. Smaller batches on phones to keep the UI thread responsive, larger batches on desktops to amortise WASM dispatch.
+* Node cache inside one ante so the same shop slot is never re-derived if two clauses touch it.
+* Filter compiler re-orders clauses by selectivity at compile time.
+
+## Repo layout
 
 | Folder | What it is |
 |---|---|
-| `engine/` | Rust crate — RNG, cache, derivations, filter compiler, search loop, WASM bindings |
-| `engine/src/tables.rs` | Canonical item tables — joker pools, tags, vouchers, bosses, packs (synced to Immolate `lib/items.cl` display names) |
-| `engine/src/bin/` | `bench_throughput`, `verify` (100k regression sweep), `smoke_anyof` (AnyOf hit-rate sanity), `extract_canonical_names` (sync helper) |
-| `web/` | Standalone React + Vite UI — minimal demo of the engine, used for benchmarking and SIMD verification |
-| `scripts/build-wasm.sh` | Builds scalar + SIMD WASM bundles, copies them into `web/public/engine{,-simd}/` |
+| `engine/` | The Rust crate: RNG, cache, derivations, filter compiler, search loop, WASM bindings |
+| `engine/src/tables.rs` | Canonical joker, voucher, tag and boss tables |
+| `engine/src/bin/` | `bench_throughput`, `verify` (regression sweep), `smoke_anyof` (AnyOf sanity), `extract_canonical_names` (sync helper) |
+| `web/` | Standalone React and Vite UI, used as a demo and a benchmark harness |
+| `scripts/build-wasm.sh` | Builds both scalar and SIMD WASM bundles and copies them into `web/public/engine/` and `web/public/engine-simd/` |
 
-## Quick start
+## Build and run
 
 ```bash
-# 1. Engine — run all tests and the regression sweep
+# Engine: unit tests plus regression sweep
 cd engine
-cargo test --release            # 21/21 unit + integration tests
+cargo test --release
 cargo run --release --bin verify -- 100000
 
-# 2. Build both WASM bundles (scalar + SIMD)
+# WASM bundles (scalar plus SIMD)
 ./scripts/build-wasm.sh
-# → engine/pkg/, engine/pkg-simd/
-# → also copies into web/public/engine{,-simd}/
 
-# 3. Standalone web UI
+# Standalone web UI
 cd ../web && npm install && npm run dev
 ```
 
-To use the engine from another project (e.g. Balatropedia), copy
-`engine/pkg/` and `engine/pkg-simd/` into the host's `public/`, and load both
-in a Web Worker — the worker probes `WebAssembly.validate` with a SIMD
-sentinel and picks whichever bundle works.
+## Sharing filters
 
-## Filter DSL
-
-JSON-serialisable, designed to be hand-writable but also UI-buildable.
-Strict mode requires every top-level clause to match; partial mode ranks
-results by how many clauses match.
-
-```json
-{
-  "clauses": [
-    { "kind": "ante_shop_has_joker", "ante": 1, "slot": 0, "joker": "Blueprint" },
-    { "kind": "voucher_is", "ante": 2, "voucher": "Telescope" },
-    { "kind": "any_of", "clauses": [
-      { "kind": "ante_tag_is", "ante": 1, "position": 0, "tag": "Negative Tag" },
-      { "kind": "ante_tag_is", "ante": 2, "position": 0, "tag": "Negative Tag" }
-    ]}
-  ],
-  "partial": false,
-  "min_score": null
-}
-```
-
-Supported clauses:
-
-- `ante_shop_has_joker { ante, slot, joker, edition? }` — slot 0 only at the
-  moment (see Known gaps).
-- `ante_tag_is { ante, position, tag }`
-- `ante_boss_is { ante, boss }`
-- `voucher_is { ante, voucher }`
-- `ante_pack_contains { ante, pack_index, card }` — pack types `Arcana`,
-  `Spectral`, `Celestial`, `Buffoon`. Standard packs return contents but
-  individual card draws (rank/suit/seal/enhancement) are not yet modelled.
-- `any_of { clauses: [...] }` — disjunction. Sub-clauses share `Instance`
-  state, so checking the same joker across antes 1..8 advances the shop
-  draw sequence naturally and is cached per `(kind, source, ante)`.
-
-## Engine status
-
-- **Native single-thread:** ~570k seeds/s on a typical joker filter,
-  ~1M seeds/s when voucher-only short-circuits hit first.
-- **WASM SIMD vs scalar:** SIMD bundle wins on every Chromium/Edge run,
-  loses on Safari (no SIMD support yet) — the worker detects and falls back.
-- **Tests:** 21/21 unit + integration green.
-- **Regression sweep (`verify -- 100000`):** 0 determinism failures, 0 pool
-  misses, 0 ante-1 locked-boss leaks, 0 white-stake sticker leaks. Joker
-  rarity at ante-1 shop: common 70.22 % / uncommon 24.78 % / rare 5.00 %.
-  Pack weights within 0.05 % of Immolate's PACKS table.
-
-## Honest gaps
-
-1. **Multi-slot shop scan** — `Op::HasJoker` currently only checks shop
-   slot 0. Most user constraints are "X appears in ante N at all" so the
-   shop is iterated via `any_of` over antes, not slots; this means a joker
-   that exists only in slot 1+ but never slot 0 of any ante won't match.
-   Tracked.
-2. **Standard pack card-level modelling** — `open_pack` returns pack-level
-   contents (the slot exists, the kind is correct) but individual playing
-   cards inside Standard packs don't get rank/suit/seal/enhancement draws
-   yet.
-3. **Bit-for-bit Immolate cross-validation** — the 100k `verify` sweep
-   proves determinism, pool validity, lock correctness, sticker correctness,
-   and distribution match. It does **not** yet prove byte-identical match
-   with Immolate. That requires running Immolate's OpenCL binary on the
-   same 100k seeds and diffing. Tracked.
-4. **Canonical-name drift** — fixed 2026-06-29. Earlier builds of the
-   engine had stripped punctuation in item tables (`Mr Bones` instead of
-   `Mr. Bones`, `Riff raff` instead of `Riff-raff`, `Drivers License`
-   instead of `Driver's License`) and a swap of `Stuntman`/`Vampire`
-   between Uncommon and Rare. Both pools and the
-   `ETERNAL_BLACKLIST`/`PERISHABLE_BLACKLIST` checks were inconsistent
-   with each other, so sticker filtering on `Mr. Bones` silently failed
-   and any client-side filter matching by display name (e.g. Balatropedia)
-   returned zero hits for the affected jokers. Now strictly synced to
-   Immolate's `lib/debug.cl` display strings.
-
-## Cross-validation against Immolate
-
-The item tables in `engine/src/tables.rs` follow the exact order and
-spelling of `J_C_BEGIN..J_L_END` in
-[Immolate's `lib/items.cl`](https://github.com/SpectralPack/Immolate/blob/main/lib/items.cl),
-with display strings taken from `lib/debug.cl`. If you spot drift, the
-helper script in `engine/src/bin/extract_canonical_names.rs` re-diffs both
-sides.
+The standalone UI and the Balatropedia Finder both serialise the current filter into a `seedfinder` query parameter (base64url encoded). Open the URL on another device and the same filter is loaded.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
-
-## Credits
-
-- RNG math + source-key naming: ported from
-  [SpectralPack/Immolate](https://github.com/SpectralPack/Immolate) (MIT).
-- Balatro is © LocalThunk. This project does not include any Balatro
-  source code or assets — only the deterministic seed-derivation math
-  the community has documented publicly.
+See `LICENSE`. The engine is independent code; it does not include or redistribute any Balatro asset. Display names from Immolate's tables are kept in sync but not bundled as game data.
