@@ -2,6 +2,40 @@
 
 All notable changes to the Balatro Seed Searcher engine.
 
+## v2.1 — 2026-06-29 (perf + responsiveness)
+
+Focused performance and UI-responsiveness pass. No semantic changes to seed
+evaluation; parity vs Immolate still bit-for-bit (100k-seed sweep, zero
+divergences after refactor).
+
+### Engine
+- **`Instance` is now `Clone`**. `Filter::evaluate` builds one template
+  `Instance` per seed (paying the `pseudohash` + `LuaRandom` 10-iter
+  warmup + `BTreeSet` allocation once) and `.clone()`s it for every
+  clause. Previously each clause called `Instance::new(seed_str)`, which
+  re-ran the warmup. Roughly N× cheaper for filters with N clauses; on a
+  typical 4-clause filter, throughput improves measurably without changing
+  any RNG semantics (clone copies all RNG state byte-for-byte).
+- **Selectivity-ordered clause execution**. `Filter::compile` now sorts
+  ops by `estimated_selectivity()` (Wraith→Rare 6e-4, edition probes
+  3e-4, plain joker 3e-2, etc.) so the rarest probe runs first. Strict-AND
+  short-circuits aggressively; partial mode is unaffected because it
+  always scores all clauses.
+- All 21 Rust unit tests still pass; bit-for-bit parity sweep clean across
+  100k seeds (determinism + scan↔inspect + interleave stability).
+
+### UI (Balatropedia + standalone)
+- **Counters tick from click time, not after a 3-second delay**. Worker
+  initial batch size dropped from 200k → 5k seeds so the first
+  `scan_chunk` returns in <10ms even on slow CPUs. Worker emits an
+  alive-ping immediately on receiving the scan message, before WASM is
+  even loaded. Orchestrator emits a synchronous progress event on
+  `start()` and ticks every 100ms (down from 200–250ms).
+- **Phase-aware progress display** (Balatropedia). Progress events now
+  carry a `phase` field (`"loading"` / `"warming"` / `"running"`) so the
+  UI can show "loading WASM…" / "warming up…" / actual rate, instead of
+  a misleading "0 seeds/s" while bytes are still being fetched.
+
 ## v2 final — 2026-06-29
 
 V2 is out of beta. The Rust+WASM engine is the default seed search backend

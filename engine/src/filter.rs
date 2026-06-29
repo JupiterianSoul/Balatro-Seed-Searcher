@@ -85,8 +85,65 @@ pub enum Op {
 
 impl Filter {
     pub fn compile(&self) -> Compiled {
-        let ops = self.clauses.iter().map(compile_clause).collect();
+        let mut ops: Vec<Op> = self.clauses.iter().map(compile_clause).collect();
+        // Selectivity-ordered execution: in strict-AND mode (the default),
+        // `Searcher::evaluate` short-circuits on the first failing clause.
+        // Putting the rarest clauses first means most seeds are rejected
+        // by the cheapest-to-fail probe. In partial mode we still score
+        // every clause, so ordering doesn't affect correctness; it only
+        // affects branch-prediction patterns. We sort unconditionally
+        // because clauses are pure and order-independent (each clause
+        // clones the template Instance before mutating).
+        ops.sort_by(|a, b| {
+            // Lower selectivity = rarer = check first.
+            estimated_selectivity(a)
+                .partial_cmp(&estimated_selectivity(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Compiled { ops, total_clauses: self.clauses.len() as u8 }
+    }
+}
+
+/// Rough analytical priors per clause family. Sourced from PARITY.md
+/// smoke runs. These are LOG-scale estimates; we only need a stable
+/// ordering, not calibrated probabilities. Lower = rarer = run first.
+fn estimated_selectivity(op: &Op) -> f64 {
+    match op {
+        // Edition-constrained shop slot is the rarest single probe.
+        Op::HasJoker { edition: Some(_), .. } => 0.0003,
+        // Sticker-only is mid-rare (stake-gated).
+        Op::HasJoker { sticker: Some(_), .. } => 0.01,
+        // Wraith→specific rare: pack-rate × rare-rate × 1/60 ≈ 6e-4.
+        Op::WraithIs { .. } => 0.0006,
+        // Soul→specific legendary: 1/14 per Soul × ~10% Soul-hit rate.
+        Op::SoulIs { .. } => 0.007,
+        // Plain shop joker over any of 16 slots: ~3% per pool.
+        Op::HasJoker { .. } => 0.03,
+        // Specific voucher per ante.
+        Op::VoucherIs { .. } => 0.03,
+        // Standard card with edition: very rare.
+        Op::StandardCardIs { edition: Some(_), .. } => 0.0003,
+        // Standard card with seal but no edition.
+        Op::StandardCardIs { seal: Some(_), .. } => 0.04,
+        // Plain standard card (base only).
+        Op::StandardCardIs { .. } => 0.07,
+        // Tag at a specific position.
+        Op::TagIs { .. } => 0.04,
+        // Boss is 1 of ~18 valid bosses at the ante.
+        Op::BossIs { .. } => 0.06,
+        // Pack content probes — single ante.
+        Op::PackContains { .. } => 0.08,
+        Op::AnyPackContains { .. } => 0.10,
+        // AnyOf is as selective as its tightest child (union scan, but
+        // short-circuits on first hit). Use the MIN child selectivity
+        // for ordering vs siblings, but bump up because we still pay
+        // for the children that miss before the hit.
+        Op::AnyOf { ops } => {
+            ops.iter()
+                .map(estimated_selectivity)
+                .fold(1.0_f64, f64::min)
+                * (ops.len() as f64).max(1.0)
+        }
     }
 }
 

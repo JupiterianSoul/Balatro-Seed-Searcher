@@ -18,33 +18,33 @@
       "full_matches": 0,
       "clause_matches": 22396,
       "hit_rate": 0,
-      "elapsed_ms": 6233,
-      "seeds_per_sec": 16044
+      "elapsed_ms": 6348,
+      "seeds_per_sec": 15753
     },
     "shop_joker": {
       "seeds": 100000,
       "full_matches": 2824,
       "clause_matches": 2824,
       "hit_rate": 0.02824,
-      "elapsed_ms": 1583,
-      "seeds_per_sec": 63171
+      "elapsed_ms": 1551,
+      "seeds_per_sec": 64475
     },
     "tag": {
       "seeds": 100000,
       "full_matches": 4126,
       "clause_matches": 4126,
       "hit_rate": 0.04126,
-      "elapsed_ms": 460,
-      "seeds_per_sec": 217391
+      "elapsed_ms": 479,
+      "seeds_per_sec": 208768
     },
     "boss": {
       "seeds": 100000,
       "full_matches": 5613,
       "clause_matches": 5613,
       "hit_rate": 0.05613,
-      "elapsed_ms": 468,
-      "seeds_per_sec": 213675
+      "elapsed_ms": 470,
+      "seeds_per_sec": 212766
     }
   },
-  "elapsed_s": "12.1"
+  "elapsed_s": "12.3"
 }

@@ -2,7 +2,18 @@
 //!
 //! Strict mode short-circuits on the first failing clause; partial mode
 //! counts matches and ranks by score. Filter clauses are pre-compiled into
-//! bytecode (`filter::Op`) and run in selectivity order.
+//! bytecode (`filter::Op`) and run in selectivity order so the rarest
+//! clauses fail-fast strict-AND searches.
+//!
+//! Performance design:
+//!   - One `Instance::new(seed)` per seed (paying `pseudohash` + the
+//!     LuaRandom 10-iter warmup once).
+//!   - Each clause `clone()`s that template into a sub-Instance, which
+//!     skips the warmup. Array-and-BTreeSet clone is ~5-10x cheaper than
+//!     `Instance::new` for typical caches.
+//!   - Clauses are re-ordered at compile time by estimated selectivity:
+//!     rarest first means strict-AND searches reject seeds with the
+//!     fewest cycles spent.
 
 use crate::derive::{
     next_boss, next_pack, next_shop_item, next_tag, next_voucher,
@@ -59,15 +70,19 @@ impl<'a> Searcher<'a> {
     }
 
     /// Evaluate compiled filter against a single seed.
+    ///
+    /// Builds ONE template Instance per seed (where `pseudohash` and the
+    /// LuaRandom 10-iter warmup happen), then `clone()`s it for each clause
+    /// that needs an isolated sub-run.
     #[inline]
     fn evaluate(&self, seed_str: &str) -> u8 {
-        let mut inst = Instance::new(seed_str);
-        inst.deck = self.config.deck;
-        inst.stake = self.config.stake;
+        let mut template = Instance::new(seed_str);
+        template.deck = self.config.deck;
+        template.stake = self.config.stake;
         let mut score: u8 = 0;
 
         for op in &self.filter.ops {
-            let hit = eval_op(&mut inst, op);
+            let hit = eval_op(&template, op);
             if hit { score += 1; }
             else if !self.partial { return score; }
         }
@@ -75,21 +90,20 @@ impl<'a> Searcher<'a> {
     }
 }
 
-/// Evaluate a single op against an Instance. Recursive so AnyOf can call back
-/// into eval_op for its children, all sharing the same Instance state.
-fn eval_op(inst: &mut Instance, op: &Op) -> bool {
+/// Evaluate a single op against a TEMPLATE Instance (immutable reference).
+///
+/// Every variant that needs to mutate engine state clones the template
+/// into a `sub` Instance. The template never mutates, so clauses are
+/// order-independent and the compiler can sort them by selectivity.
+fn eval_op(inst: &Instance, op: &Op) -> bool {
     match op {
         Op::HasJoker { ante, slot, joker_id, edition, sticker } => {
-            // Multi-slot shop scan: simulate slots [0, slot] on a fresh sub-Instance
-            // so the parent's RNG node cache stays clean. `slot` is u8, so we step
-            // through (slot + 1) items and inspect the last one.
-            // For slot = u8::MAX we treat it as "any slot in [0, 15)" — the common
-            // "first N rerolls" use case.
+            // Multi-slot shop scan. `slot=255` is the sentinel for
+            // "any of the first 16 slots" — covers the default 4-slot
+            // shop plus up to 12 rerolls.
             let scan_end = if *slot == 255 { 16 } else { (*slot as usize) + 1 };
             let scan_target_only = *slot != 255;
-            let mut sub = Instance::new(inst.seed_str());
-            sub.deck = inst.deck;
-            sub.stake = inst.stake;
+            let mut sub = inst.clone();
             for s in 0..scan_end {
                 let slot_data = next_shop_item(&mut sub, *ante as i32);
                 let is_target = if scan_target_only { s + 1 == scan_end } else { true };
@@ -103,9 +117,7 @@ fn eval_op(inst: &mut Instance, op: &Op) -> bool {
         Op::TagIs { ante, position, tag_id } => {
             // position 0 = small-blind tag, position 1 = big-blind tag.
             // Mirrors Immolate: two consecutive `next_tag` draws per ante.
-            let mut sub = Instance::new(inst.seed_str());
-            sub.deck = inst.deck;
-            sub.stake = inst.stake;
+            let mut sub = inst.clone();
             let p = *position as usize;
             let mut drawn: &'static str = "";
             for i in 0..=p {
@@ -115,31 +127,27 @@ fn eval_op(inst: &mut Instance, op: &Op) -> bool {
             crate::filter::stable_hash16_u16(drawn) == *tag_id
         }
         Op::BossIs { ante, boss_id } => {
-            let drawn = next_boss(inst, *ante as i32);
+            let mut sub = inst.clone();
+            let drawn = next_boss(&mut sub, *ante as i32);
             crate::filter::stable_hash16_u16(drawn) == *boss_id
         }
         Op::VoucherIs { ante, voucher_id } => {
-            let drawn = next_voucher(inst, *ante as i32);
+            let mut sub = inst.clone();
+            let drawn = next_voucher(&mut sub, *ante as i32);
             crate::filter::stable_hash16_u16(drawn) == *voucher_id
         }
         Op::PackContains { ante, pack_index, card_id } => {
-            let mut sub = Instance::new(inst.seed_str());
-            sub.deck = inst.deck;
-            sub.stake = inst.stake;
+            let mut sub = inst.clone();
             let want = *card_id;
-            let mut found = false;
             let mut last_pack: &'static str = "";
             for _ in 0..=*pack_index {
                 last_pack = next_pack(&mut sub, *ante as i32);
             }
             let contents = open_pack_detailed(&mut sub, last_pack, *ante as i32);
-            found = pack_contains_id(&contents, want);
-            found
+            pack_contains_id(&contents, want)
         }
         Op::AnyPackContains { ante, max_packs, card_id } => {
-            let mut sub = Instance::new(inst.seed_str());
-            sub.deck = inst.deck;
-            sub.stake = inst.stake;
+            let mut sub = inst.clone();
             let want = *card_id;
             let mut found = false;
             for _ in 0..*max_packs {
@@ -150,18 +158,13 @@ fn eval_op(inst: &mut Instance, op: &Op) -> bool {
             found
         }
         Op::SoulIs { ante, max_packs, joker_id } => {
-            // Walk first `max_packs` shop packs of `ante`. For arcana / spectral
-            // packs that contain The Soul, resolve which Legendary it forces.
-            let mut sub = Instance::new(inst.seed_str());
-            sub.deck = inst.deck;
-            sub.stake = inst.stake;
+            let mut sub = inst.clone();
             let want = *joker_id;
             let mut found = false;
             for _ in 0..*max_packs {
                 let pack = next_pack(&mut sub, *ante as i32);
                 let contents = open_pack(&mut sub, pack, *ante as i32);
                 if pack_contains_id(&contents, crate::filter::stable_hash16_u16("The Soul")) {
-                    // Soul appeared → resolve the legendary it forces.
                     let leg = resolve_soul_legendary(&mut sub, *ante as i32);
                     if crate::filter::stable_hash16_u16(leg) == want {
                         found = true;
@@ -172,11 +175,7 @@ fn eval_op(inst: &mut Instance, op: &Op) -> bool {
             found
         }
         Op::WraithIs { ante, max_packs, joker_id } => {
-            // Walk first `max_packs` shop packs. Spectral packs containing Wraith
-            // → resolve which Rare joker Wraith forces.
-            let mut sub = Instance::new(inst.seed_str());
-            sub.deck = inst.deck;
-            sub.stake = inst.stake;
+            let mut sub = inst.clone();
             let want = *joker_id;
             let mut found = false;
             for _ in 0..*max_packs {
@@ -193,11 +192,7 @@ fn eval_op(inst: &mut Instance, op: &Op) -> bool {
             found
         }
         Op::StandardCardIs { ante, max_packs, base_id, enhancement, edition, seal } => {
-            // Walk first `max_packs` shop packs. For Standard packs, simulate
-            // each card and match against the requested constraints.
-            let mut sub = Instance::new(inst.seed_str());
-            sub.deck = inst.deck;
-            sub.stake = inst.stake;
+            let mut sub = inst.clone();
             let mut found = false;
             for _ in 0..*max_packs {
                 let pack = next_pack(&mut sub, *ante as i32);

@@ -95,18 +95,33 @@ const stopFlags = new Set<number>();
 const TARGET_BATCH_MS = 250;
 const MIN_BATCH = 1000n;
 const MAX_BATCH = 500_000n;
-const PROGRESS_INTERVAL_MS = 500;
+const PROGRESS_INTERVAL_MS = 100;
+// First batch is intentionally tiny so the very first scan_chunk completes in <10ms
+// and the user sees the rate/checked counters move immediately rather than after
+// a 1-2 second initial 200k-seed chunk. Subsequent batches adapt up.
+const INITIAL_BATCH = 5_000n;
 
 async function handleScan(msg: WorkerInboundScan): Promise<void> {
   const { workerId, filter, startRank, seedLen, deckIdx, stakeIdx, partial, minScore } = msg;
   let remaining = msg.count;
   let currentRank = startRank;
-  let batchSize = msg.count < 10_000n ? msg.count : 10_000n;
+  let batchSize = msg.count < INITIAL_BATCH ? msg.count : INITIAL_BATCH;
   let totalScanned = 0n;
   const searchStart = performance.now();
-  let lastProgressMs = searchStart;
+  // Back-date so the first scan iteration's progress fires immediately
+  let lastProgressMs = searchStart - PROGRESS_INTERVAL_MS;
 
   stopFlags.delete(workerId);
+
+  // Emit a zero-progress ping immediately so the UI can show the worker is alive
+  // even before WASM finishes loading.
+  const aliveMsg: WorkerOutbound = {
+    type: 'progress',
+    workerId,
+    scanned: 0n,
+    elapsedMs: 0,
+  };
+  self.postMessage(aliveMsg);
 
   let engine: EngineModule;
   try {

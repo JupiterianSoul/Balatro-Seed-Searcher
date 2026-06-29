@@ -153,6 +153,13 @@ const CACHE_SIZE: usize = 64;
 /// Per-run game instance. Holds the hashed seed, the RNG state machine,
 /// the node cache, and the lock state set used by `randchoice_common` to
 /// drive the resample loop.
+///
+/// `Clone` is intentional: the search hot loop builds ONE Instance per seed
+/// (which is where `pseudohash` and the 10-iter LuaRandom warmup happen)
+/// and then `.clone()`s it for each clause that needs an isolated sub-run.
+/// Cloning is much cheaper than `Instance::new` — just a 64-entry array
+/// copy plus a (typically empty) BTreeSet clone.
+#[derive(Clone)]
 pub struct Instance {
     seed_string: heapless8::Buf,
     hashed_seed: f64,

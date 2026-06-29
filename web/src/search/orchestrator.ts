@@ -103,10 +103,14 @@ export class SearchOrchestrator {
       this.workerScanned.set(i, 0n);
     }
 
-    // Emit progress every 200ms
+    // Emit an immediate progress event so the UI starts ticking the moment
+    // the user clicks Start, instead of waiting for the first worker message.
+    this.emitProgress();
+
+    // Emit progress every 100ms thereafter for smooth rate/elapsed updates
     this.progressInterval = setInterval(() => {
       if (this.running) this.emitProgress();
-    }, 200);
+    }, 100);
   }
 
   stop(): void {
