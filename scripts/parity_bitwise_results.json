@@ -1,0 +1,50 @@
+{
+  "seeds_sampled": 100000,
+  "deck_idx": 0,
+  "stake_idx": 0,
+  "determinism": {
+    "sample": 10000,
+    "mismatches": 0,
+    "pass": true
+  },
+  "interleave_stability": {
+    "sample": 10000,
+    "mismatches": 0,
+    "pass": true
+  },
+  "per_filter": {
+    "combined": {
+      "seeds": 100000,
+      "full_matches": 0,
+      "clause_matches": 22396,
+      "hit_rate": 0,
+      "elapsed_ms": 6233,
+      "seeds_per_sec": 16044
+    },
+    "shop_joker": {
+      "seeds": 100000,
+      "full_matches": 2824,
+      "clause_matches": 2824,
+      "hit_rate": 0.02824,
+      "elapsed_ms": 1583,
+      "seeds_per_sec": 63171
+    },
+    "tag": {
+      "seeds": 100000,
+      "full_matches": 4126,
+      "clause_matches": 4126,
+      "hit_rate": 0.04126,
+      "elapsed_ms": 460,
+      "seeds_per_sec": 217391
+    },
+    "boss": {
+      "seeds": 100000,
+      "full_matches": 5613,
+      "clause_matches": 5613,
+      "hit_rate": 0.05613,
+      "elapsed_ms": 468,
+      "seeds_per_sec": 213675
+    }
+  },
+  "elapsed_s": "12.1"
+}

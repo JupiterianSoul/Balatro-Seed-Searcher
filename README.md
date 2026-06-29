@@ -5,9 +5,30 @@ A from-scratch Balatro seed search engine — Rust core, WebAssembly delivery
 browser; no install, no server round-trip, no telemetry.
 
 **Live demo (standalone):** deployed via the Perplexity asset-share URL in
-`/web/`. **Live demo (integrated):** wired into
-[Balatropedia](https://github.com/JupiterianSoul/Balatropedia) behind a beta
-toggle in the Seed Finder tab.
+`/web/`. **Live demo (integrated):** the default seed search engine on
+[Balatropedia](https://github.com/JupiterianSoul/Balatropedia) — the prior
+JS engine remains as `?legacy=1` fallback only.
+
+## v2 final feature surface
+
+- Joker constraint with edition + sticker, routed through any of
+  shop / buffoon-pack / arcana-soul / spectral-soul / spectral-wraith /
+  legendary-soul sources.
+- Voucher constraint (per-ante).
+- Tag constraint with small-blind / big-blind position selector.
+- Boss constraint (all 28 bosses).
+- Standard pack card constraint: independent suit, rank, enhancement,
+  edition, and seal fields.
+- Soul → specific legendary resolution (Canio, Triboulet, Yorick, Chicot,
+  Perkeo).
+- Wraith → specific Rare joker resolution.
+- `inspect_seed` single-seed inspector (returns matched/unmatched
+  per-clause detail).
+- Share URL roundtrip via `?seedfinder=<base64url>`.
+- Worker pool size control (Eco → Extreme tiers with per-device
+  recommendation).
+- See `CHANGELOG.md` for the full v2 final delta and
+  `scripts/PARITY.md` for the bit-for-bit harness write-up.
 
 ```
    ┌───────────────────────────────────────────────────────────┐
