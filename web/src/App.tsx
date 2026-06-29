@@ -67,12 +67,77 @@ export default function App(): React.JSX.Element {
 
   const [engineStatus, setEngineStatus] = useState<EngineStatus>('detecting');
 
+  // ─── V3 (WebGPU) beta state ──────────────────────────────────────────────
+  // Off by default. ?v3=1 reveals the toggle for everyone. Once enabled the
+  // user keeps it across reloads via localStorage. Searches still run on
+  // WASM in V3 — see docs/V3_DESIGN.md.
+  const showV3Toggle = (() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.get('v3') === '1' || localStorage.getItem('seed-searcher-v3-beta') === 'on';
+    } catch { return false; }
+  })();
+  const [v3Beta, setV3Beta] = useState<boolean>(() => {
+    try { return localStorage.getItem('seed-searcher-v3-beta') === 'on'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('seed-searcher-v3-beta', v3Beta ? 'on' : 'off'); } catch {}
+  }, [v3Beta]);
+  const [v3Status, setV3Status] = useState<string>('');
+
   const orchestratorRef = useRef<SearchOrchestrator | null>(null);
 
   // Detect SIMD on mount
   useEffect(() => {
     void detectSimd().then(simd => setEngineStatus(simd ? 'simd' : 'scalar'));
   }, []);
+
+  // V3 probe — runs whenever the beta toggle flips on.
+  useEffect(() => {
+    let cancelled = false;
+    if (!v3Beta) { setV3Status(''); return; }
+    setV3Status('probing…');
+    (async () => {
+      try {
+        const simd = await detectSimd();
+        const basePath = simd ? '/engine-simd' : '/engine';
+        // Use runtime URL construction so Vite doesn't try to bundle the
+        // public asset at build time.
+        const origin = window.location.origin;
+        const jsUrl = new URL(`${basePath}/balatro_seed_engine.js`, origin).toString();
+        const wasmUrl = new URL(`${basePath}/balatro_seed_engine_bg.wasm`, origin).toString();
+        const wasmJs = await import(/* @vite-ignore */ jsUrl) as {
+          default: (opts?: { module_or_path?: string }) => Promise<unknown>;
+          v3_diagnostic_cpu: (a: number, b: number, c: number) => Uint32Array;
+          v3_diagnostic_shader_source: () => string;
+        };
+        await wasmJs.default({ module_or_path: wasmUrl });
+        const { selectEngine } = await import('./v3/engineSelector');
+        const desc = await selectEngine({
+          v3Beta: true,
+          wasm: {
+            v3_diagnostic_cpu: wasmJs.v3_diagnostic_cpu,
+            v3_diagnostic_shader_source: wasmJs.v3_diagnostic_shader_source,
+          },
+        });
+        if (cancelled) return;
+        if (desc.webgpu?.kind === 'ready') {
+          const mb = (desc.webgpu.throughputSeedsPerSec / 1e6).toFixed(1);
+          setV3Status(`WebGPU verified · ${desc.webgpu.adapterInfo} · ~${mb}M ops/s diagnostic`);
+        } else if (desc.webgpu?.kind === 'unsupported') {
+          setV3Status(`WebGPU unavailable: ${desc.webgpu.reason}`);
+        } else if (desc.webgpu?.kind === 'verification-failed') {
+          setV3Status(`WebGPU verification failed: ${desc.webgpu.reason}`);
+        } else {
+          setV3Status('probing…');
+        }
+      } catch (e) {
+        if (!cancelled) setV3Status(`V3 probe error: ${String(e)}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [v3Beta]);
 
   // Lazy-create orchestrator
   function getOrchestrator(): SearchOrchestrator {
@@ -175,6 +240,19 @@ export default function App(): React.JSX.Element {
             {engineStatus === 'scalar' && (
               <span className="engine-pill engine-pill--scalar">WASM scalar</span>
             )}
+            {showV3Toggle && v3Beta && (
+              <span
+                className="engine-pill"
+                style={{
+                  background: 'rgba(8, 145, 178, 0.15)',
+                  color: '#67e8f9',
+                  border: '1px solid rgba(8, 145, 178, 0.4)',
+                }}
+                title={v3Status}
+              >
+                V3 beta
+              </span>
+            )}
           </div>
         </div>
       </header>
@@ -271,6 +349,49 @@ export default function App(): React.JSX.Element {
                 <p className="hint-text">Add at least one clause to enable search.</p>
               )}
             </div>
+
+            {showV3Toggle && (
+              <div
+                className="card"
+                style={{
+                  borderColor: 'rgba(8, 145, 178, 0.4)',
+                  background: 'rgba(8, 145, 178, 0.06)',
+                }}
+              >
+                <h2 className="card-title">V3 engine (WebGPU beta)</h2>
+                <label
+                  className="config-row"
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={v3Beta}
+                    onChange={e => setV3Beta(e.target.checked)}
+                    disabled={isRunning}
+                    style={{ marginTop: 4 }}
+                  />
+                  <span style={{ fontSize: 12, lineHeight: 1.4, color: '#cbd5e1' }}>
+                    Probe your GPU and run a verified integer benchmark.{' '}
+                    <strong style={{ color: '#67e8f9' }}>Searches still run on WASM</strong> in
+                    this build — the GPU search path is blocked on full f64 emulation.
+                    See V3_DESIGN.md.
+                  </span>
+                </label>
+                {v3Beta && v3Status && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+                      fontSize: 10,
+                      color: '#67e8f9',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {v3Status}
+                  </div>
+                )}
+              </div>
+            )}
           </aside>
 
           {/* Right: Results */}

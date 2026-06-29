@@ -18,6 +18,7 @@ pub mod items;
 pub mod derive;
 pub mod filter;
 pub mod search;
+pub mod v3;
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_api;

@@ -2,6 +2,55 @@
 
 All notable changes to the Balatro Seed Searcher engine.
 
+## v3.0-beta1 — 2026-06-29 (WebGPU scaffold, search backend unchanged)
+
+First beta of the V3 (WebGPU) engine path. **Searches still run on the
+WASM CPU engine.** V3 ships WebGPU detection, a verified diagnostic
+compute shader, and the fallback chain that real GPU search will plug
+into once the precision blocker is solved. See `docs/V3_DESIGN.md`.
+
+### Engine
+- **`engine/src/v3/df.rs`** — Dekker / Knuth double-float arithmetic
+  (two-sum, two-product, add/sub/mul/div/floor/fract, i64-halves
+  helpers) used for the f32 parity investigation.
+- **`engine/src/v3/pseudohash.rs`, `lua_random.rs`, `boss_probe.rs`** —
+  DF-emulated mirrors of the hot path. Tests document, but do not
+  assert, the divergence from the reference `f64` outputs: DF
+  pseudohash drifts 0.3–0.6 from f64 after a few dozen iterations, and
+  the DF boss probe agrees with f64 only ~4.3 % of the time. This is
+  the data that ruled out the original "f32 + CPU verify" plan; see
+  V3_DESIGN.md for the reasoning.
+- **`engine/src/v3/diagnostic.rs`** — integer-only tausworthe RNG that
+  serves as the verification reference for the WGSL shader.
+- **`engine/shaders/diagnostic.wgsl`** — 163-line compute shader,
+  validated by `naga`, runs the same tausworthe across 4096 lanes /
+  64-thread workgroups. Output verified bit-for-bit against
+  `v3_diagnostic_cpu` inside the browser before V3 reports `ready`.
+- **`v3_diagnostic_cpu` and `v3_diagnostic_shader_source`** added to
+  the `wasm_bindgen` API.
+- `cargo test --release` is 33 / 33 passing.
+
+### Web (Balatropedia + standalone)
+- New `v3/webgpuEngine.ts` and `v3/engineSelector.ts` modules in both
+  apps. `selectEngine({ v3Beta, wasm })` returns an `EngineDescriptor`
+  with `searchBackend: 'wasm'` enforced at the type level (V3 cannot
+  silently divert searches to an unverified GPU path).
+- **V3 beta toggle** wired into both apps, hidden by default. Enable
+  via `?v3=1` in the URL; preference persists in `localStorage`.
+- When V3 is enabled the app probes WebGPU on mount and shows one of:
+  `WebGPU verified · <adapter> · ~XM ops/s diagnostic`,
+  `WebGPU unavailable: <reason>`, or
+  `WebGPU verification failed: <reason>`.
+- Engine indicator gains a `V3 beta` pill in the header (standalone)
+  when the toggle is on.
+
+### Known non-issues
+- V3 does not change throughput on seed searches in this build. That
+  is intentional and documented — see V3_DESIGN.md § "What actually
+  happened" for why `f32` and DF emulation can't drop in for the
+  pseudohash + LuaRandom chain, and § "Paths forward" for what the
+  next sprint would look like.
+
 ## v2.1 — 2026-06-29 (perf + responsiveness)
 
 Focused performance and UI-responsiveness pass. No semantic changes to seed

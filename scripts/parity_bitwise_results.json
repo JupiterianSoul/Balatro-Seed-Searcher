@@ -1,5 +1,5 @@
 {
-  "seeds_sampled": 100000,
+  "seeds_sampled": 10000,
   "deck_idx": 0,
   "stake_idx": 0,
   "determinism": {
@@ -14,37 +14,37 @@
   },
   "per_filter": {
     "combined": {
-      "seeds": 100000,
+      "seeds": 10000,
       "full_matches": 0,
-      "clause_matches": 22396,
+      "clause_matches": 2277,
       "hit_rate": 0,
-      "elapsed_ms": 6348,
-      "seeds_per_sec": 15753
+      "elapsed_ms": 613,
+      "seeds_per_sec": 16313
     },
     "shop_joker": {
-      "seeds": 100000,
-      "full_matches": 2824,
-      "clause_matches": 2824,
-      "hit_rate": 0.02824,
-      "elapsed_ms": 1551,
-      "seeds_per_sec": 64475
+      "seeds": 10000,
+      "full_matches": 273,
+      "clause_matches": 273,
+      "hit_rate": 0.0273,
+      "elapsed_ms": 153,
+      "seeds_per_sec": 65359
     },
     "tag": {
-      "seeds": 100000,
-      "full_matches": 4126,
-      "clause_matches": 4126,
-      "hit_rate": 0.04126,
-      "elapsed_ms": 479,
-      "seeds_per_sec": 208768
+      "seeds": 10000,
+      "full_matches": 406,
+      "clause_matches": 406,
+      "hit_rate": 0.0406,
+      "elapsed_ms": 47,
+      "seeds_per_sec": 212766
     },
     "boss": {
-      "seeds": 100000,
-      "full_matches": 5613,
-      "clause_matches": 5613,
-      "hit_rate": 0.05613,
-      "elapsed_ms": 470,
-      "seeds_per_sec": 212766
+      "seeds": 10000,
+      "full_matches": 597,
+      "clause_matches": 597,
+      "hit_rate": 0.0597,
+      "elapsed_ms": 48,
+      "seeds_per_sec": 208333
     }
   },
-  "elapsed_s": "12.3"
+  "elapsed_s": "4.3"
 }

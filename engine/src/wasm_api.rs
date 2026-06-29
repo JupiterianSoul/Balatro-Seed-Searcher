@@ -339,3 +339,21 @@ fn stake_from_idx(i: u8) -> Stake {
         4 => Stake::Blue, 5 => Stake::Purple, 6 => Stake::Orange, _ => Stake::Gold,
     }
 }
+
+// ---------------------------------------------------------------------------
+// V3 diagnostic surface — pairs with `engine/shaders/diagnostic.wgsl`.
+// The browser worker runs both the WGSL compute shader and `v3_diagnostic_cpu`
+// over the same parameters; if outputs match, the WebGPU stack is verified.
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen]
+pub fn v3_diagnostic_cpu(seed_base: u32, iter_count: u32, seed_count: u32) -> Vec<u32> {
+    crate::v3::diagnostic::run_cpu(seed_base, iter_count, seed_count)
+}
+
+/// Returns the WGSL shader source as a string so the JS side doesn't have to
+/// fetch a separate file. Keeps engine and shader versioned together.
+#[wasm_bindgen]
+pub fn v3_diagnostic_shader_source() -> String {
+    include_str!("../shaders/diagnostic.wgsl").to_string()
+}
