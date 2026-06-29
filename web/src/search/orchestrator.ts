@@ -91,6 +91,20 @@ export class SearchOrchestrator {
       && typeof SharedArrayBuffer !== 'undefined';
     this.threadedMode = canThread;
 
+    // Optional: when running inside the Android APK (MainActivity adds
+    // AndroidDebug as a JS interface), echo the diagnostic to logcat so
+    // we can confirm on-device that COOP/COEP landed and threading
+    // actually engaged. No-ops on the open web.
+    try {
+      const ad: any = (globalThis as any).AndroidDebug;
+      if (ad && typeof ad.log === 'function') {
+        ad.log('crossOriginIsolated', String((globalThis as any).crossOriginIsolated));
+        ad.log('SharedArrayBuffer', String(typeof SharedArrayBuffer !== 'undefined'));
+        ad.log('hardwareConcurrency', String((navigator as any).hardwareConcurrency ?? 'n/a'));
+        ad.log('engineMode', canThread ? 'threaded' : 'nworker-fallback');
+      }
+    } catch { /* no-op */ }
+
     if (canThread) {
       // THREADED MODE — single worker, single WASM heap, rayon inside.
       this.workerCount = 1;
