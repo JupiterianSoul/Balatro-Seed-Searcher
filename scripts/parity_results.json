@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Blueprint in shop, ante 1..8",
+    "expectedRate": null,
+    "eng": {
+      "scanned": 200000,
+      "matches": 40564,
+      "rate": 0.20282
+    },
+    "engMs": 16588,
+    "imm": {
+      "scanned": 13588,
+      "matches": 4382,
+      "rate": 0.32249043273476596
+    },
+    "immMs": 15022
+  },
+  {
+    "name": "Negative Tag (any blind) ante 1",
+    "expectedRate": 0.085,
+    "eng": {
+      "scanned": 7600000,
+      "matches": 619931,
+      "rate": 0.08156986842105263
+    },
+    "engMs": 15200,
+    "imm": {
+      "scanned": 197964,
+      "matches": 16105,
+      "rate": 0.08135317532480653
+    },
+    "immMs": 15001
+  },
+  {
+    "name": "Common Greedy Joker in shop, ante 1",
+    "expectedRate": null,
+    "eng": {
+      "scanned": 4600000,
+      "matches": 37452,
+      "rate": 0.008141739130434783
+    },
+    "engMs": 15428,
+    "imm": {
+      "scanned": 194615,
+      "matches": 22906,
+      "rate": 0.11769904683606094
+    },
+    "immMs": 15001
+  }
+]

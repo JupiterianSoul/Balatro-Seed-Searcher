@@ -12,6 +12,7 @@
 //! Ported verbatim from Immolate's lib/cache.cl + lib/instance.cl.
 
 use crate::rng::{pseudohash, LuaRandom};
+use crate::tables::VOUCHERS;
 use std::collections::BTreeSet;
 
 /// All RNG sources the game uses (which "key" prefix is hashed).
@@ -168,6 +169,12 @@ pub struct Instance {
     pub showman: bool,
     /// Stake of the run — controls sticker rolls. Defaults to White (no stickers).
     pub stake: crate::state::Stake,
+    /// Voucher activation state. Index `i` is active iff `vouchers[i]`.
+    /// Mirrors Immolate's `params.vouchers[voucher - (V_BEGIN + 1)]`.
+    /// The VOUCHERS table follows the V_BEGIN+1 ordering (base, upgraded, base, …).
+    pub vouchers: [bool; 32],
+    /// Deck — affects shop spectral rate (Ghost deck), starting vouchers, etc.
+    pub deck: crate::state::Deck,
 }
 
 impl Instance {
@@ -185,7 +192,35 @@ impl Instance {
             locked: BTreeSet::new(),
             showman: false,
             stake: crate::state::Stake::White,
+            vouchers: [false; 32],
+            deck: crate::state::Deck::Red,
         }
+    }
+
+    /// Activate a voucher by name. Mirrors `functions.cl::activate_voucher`:
+    /// flips the voucher's index true, locks the voucher item (so it can't be
+    /// re-drawn), and either auto-activates the base half (when upgrading) or
+    /// unlocks the upgraded half (when activating the base).
+    pub fn activate_voucher(&mut self, voucher: &'static str) {
+        if let Some(idx) = VOUCHERS.iter().position(|v| *v == voucher) {
+            self.vouchers[idx] = true;
+            self.locked.insert(voucher);
+            // Per Immolate: voucherIndex % 2 == 1 means it's the upgraded
+            // half; activating it implies the base half is also active.
+            // Otherwise (base half), the upgraded half becomes unlockable.
+            if idx % 2 == 1 && idx > 0 {
+                self.vouchers[idx - 1] = true;
+            } else if idx + 1 < VOUCHERS.len() {
+                self.locked.remove(VOUCHERS[idx + 1]);
+            }
+        }
+    }
+
+    /// `is_voucher_active` — checks index in `vouchers` array by name.
+    pub fn is_voucher_active(&self, voucher: &str) -> bool {
+        if let Some(idx) = VOUCHERS.iter().position(|v| *v == voucher) {
+            self.vouchers[idx]
+        } else { false }
     }
 
     /// Lock an item so the next `randchoice_common` will resample past it.

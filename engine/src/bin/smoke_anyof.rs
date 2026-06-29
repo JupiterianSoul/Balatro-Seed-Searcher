@@ -29,7 +29,7 @@ fn main() {
     run(
         "strict: Blueprint @ ante 1",
         Filter {
-            clauses: vec![Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None }],
+            clauses: vec![Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None, sticker: None }],
             partial: false, min_score: None,
         },
         200_000, false, 0,
@@ -41,8 +41,7 @@ fn main() {
         Filter {
             clauses: vec![Clause::AnyOf {
                 clauses: (1..=8).map(|a| Clause::AnteShopHasJoker {
-                    ante: a, slot: 0, joker: "Blueprint".into(), edition: None,
-                }).collect(),
+                    ante: a, slot: 0, joker: "Blueprint".into(), edition: None, sticker: None }).collect(),
             }],
             partial: false, min_score: None,
         },
@@ -56,13 +55,11 @@ fn main() {
             clauses: vec![
                 Clause::AnyOf {
                     clauses: (1..=8).map(|a| Clause::AnteShopHasJoker {
-                        ante: a, slot: 0, joker: "Blueprint".into(), edition: None,
-                    }).collect(),
+                        ante: a, slot: 0, joker: "Blueprint".into(), edition: None, sticker: None }).collect(),
                 },
                 Clause::AnyOf {
                     clauses: (1..=8).map(|a| Clause::AnteShopHasJoker {
-                        ante: a, slot: 0, joker: "Brainstorm".into(), edition: None,
-                    }).collect(),
+                        ante: a, slot: 0, joker: "Brainstorm".into(), edition: None, sticker: None }).collect(),
                 },
             ],
             partial: false, min_score: None,

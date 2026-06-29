@@ -33,14 +33,14 @@ fn main() {
 
     bench(
         "1-clause joker ante1",
-        vec![Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None }],
+        vec![Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None, sticker: None }],
         2_000_000,
     );
 
     bench(
         "2-clause joker+boss",
         vec![
-            Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None },
+            Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None, sticker: None },
             Clause::AnteBossIs { ante: 3, boss: "TheHook".into() },
         ],
         2_000_000,
@@ -48,7 +48,7 @@ fn main() {
 
     bench(
         "joker any-slot antes 1..8",
-        (1..=8).map(|a| Clause::AnteShopHasJoker { ante: a, slot: 0, joker: "Blueprint".into(), edition: None }).collect(),
+        (1..=8).map(|a| Clause::AnteShopHasJoker { ante: a, slot: 0, joker: "Blueprint".into(), edition: None, sticker: None }).collect(),
         500_000,
     );
 
@@ -73,7 +73,7 @@ fn main() {
     bench(
         "5-clause mixed (joker+voucher+tag+boss+pack)",
         vec![
-            Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None },
+            Clause::AnteShopHasJoker { ante: 1, slot: 0, joker: "Blueprint".into(), edition: None, sticker: None },
             Clause::VoucherIs { ante: 1, voucher: "Overstock".into() },
             Clause::AnteTagIs { ante: 1, position: 0, tag: "RareTag".into() },
             Clause::AnteBossIs { ante: 3, boss: "TheHook".into() },
@@ -86,7 +86,7 @@ fn main() {
         "16-clause joker x16 antes",
         (1..=8).flat_map(|a| {
             ["Blueprint", "Brainstorm"].into_iter().map(move |j|
-                Clause::AnteShopHasJoker { ante: a, slot: 0, joker: j.into(), edition: None })
+                Clause::AnteShopHasJoker { ante: a, slot: 0, joker: j.into(), edition: None, sticker: None })
         }).collect(),
         500_000,
     );

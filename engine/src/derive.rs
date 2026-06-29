@@ -21,8 +21,9 @@ use crate::instance::{Instance, NodeKey, RandomSource, RandomType};
 use crate::tables::{
     COMMON_JOKERS, LEGENDARY_JOKERS, RARE_JOKERS, UNCOMMON_JOKERS, TAGS, VOUCHERS,
     BOSSES_SMALL_BIG, BOSSES_FINISHER, TAROTS, PLANETS, SPECTRALS,
+    CARDS, ENHANCEMENTS,
 };
-use crate::state::Stake;
+use crate::state::{Deck, Stake};
 
 /// Rarity bucket the next joker draw falls into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,6 +221,8 @@ pub enum PackContents {
     Planets(Vec<&'static str>),
     Spectrals(Vec<&'static str>),
     Jokers(Vec<&'static str>),
+    /// Standard pack — detailed cards (base/enhancement/edition/seal).
+    StandardCards(Vec<StandardCard>),
     Standard,
     Unknown,
 }
@@ -312,6 +315,183 @@ pub fn next_boss(inst: &mut Instance, ante: i32) -> &'static str {
     inst.apply_ante_locks(ante);
     let pool: &[&'static str] = if ante % 8 == 0 { BOSSES_FINISHER } else { BOSSES_SMALL_BIG };
     inst.rand_choice_common(RandomType::Boss, RandomSource::Null, ante, pool)
+}
+
+
+// =========================================================================
+// Shop instance + slot dispatch — mirrors functions.cl:284–372.
+// =========================================================================
+
+/// Shop rates per slot type. Mirrors Immolate's `shop` struct.
+#[derive(Clone, Copy, Debug)]
+pub struct ShopRates {
+    pub joker: f64, pub tarot: f64, pub planet: f64,
+    pub playing_card: f64, pub spectral: f64,
+}
+impl ShopRates {
+    pub fn total(&self) -> f64 {
+        self.joker + self.tarot + self.planet + self.playing_card + self.spectral
+    }
+}
+
+/// Shop slot type returned by the R_Card_Type dispatch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShopItemType { Joker, Tarot, Planet, PlayingCard, Spectral }
+
+/// Mirrors `functions.cl::get_shop_instance` — returns rate weights for each
+/// slot type given the current deck and voucher state.
+pub fn get_shop_instance(inst: &Instance) -> ShopRates {
+    let mut rates = ShopRates {
+        joker: 20.0, tarot: 4.0, planet: 4.0,
+        playing_card: 0.0, spectral: 0.0,
+    };
+    if matches!(inst.deck, Deck::Ghost) { rates.spectral = 2.0; }
+    if inst.is_voucher_active("Tarot Tycoon") { rates.tarot = 32.0; }
+    else if inst.is_voucher_active("Tarot Merchant") { rates.tarot = 9.6; }
+    if inst.is_voucher_active("Planet Tycoon") { rates.planet = 32.0; }
+    else if inst.is_voucher_active("Planet Merchant") { rates.planet = 9.6; }
+    if inst.is_voucher_active("Magic Trick") { rates.playing_card = 4.0; }
+    rates
+}
+
+/// Decide which slot type the R_Card_Type roll lands on. Mirrors
+/// `functions.cl::get_item_type`.
+fn item_type_from_rate(rates: ShopRates, mut v: f64) -> ShopItemType {
+    if v < rates.joker { return ShopItemType::Joker; } v -= rates.joker;
+    if v < rates.tarot { return ShopItemType::Tarot; } v -= rates.tarot;
+    if v < rates.planet { return ShopItemType::Planet; } v -= rates.planet;
+    if v < rates.playing_card { return ShopItemType::PlayingCard; }
+    ShopItemType::Spectral
+}
+
+/// One shop slot after a `next_shop_item` advance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShopSlot {
+    pub kind: ShopItemType,
+    pub item: &'static str,
+    pub rarity: Option<Rarity>,
+    pub edition: Edition,
+    pub stickers: Stickers,
+}
+
+/// Mirrors `functions.cl::next_shop_item`. MUTATES the shared Instance —
+/// repeated calls within one ante yield slots 0, 1, 2, … in order.
+pub fn next_shop_item(inst: &mut Instance, ante: i32) -> ShopSlot {
+    let rates = get_shop_instance(inst);
+    let total = rates.total();
+    let key = NodeKey::with_ante(RandomType::CardType, RandomSource::Null, ante);
+    let card_type = inst.random(key) * total;
+    let kind = item_type_from_rate(rates, card_type);
+    match kind {
+        ShopItemType::Joker => {
+            let (joker, rarity, edition, stickers) =
+                next_joker_with_stickers(inst, RandomSource::Shop, ante);
+            ShopSlot { kind, item: joker, rarity: Some(rarity), edition, stickers }
+        }
+        ShopItemType::Tarot => {
+            let item = next_tarot(inst, RandomSource::Shop, ante, false);
+            ShopSlot { kind, item, rarity: None, edition: Edition::None, stickers: Stickers::default() }
+        }
+        ShopItemType::Planet => {
+            let item = next_planet(inst, RandomSource::Shop, ante, false);
+            ShopSlot { kind, item, rarity: None, edition: Edition::None, stickers: Stickers::default() }
+        }
+        ShopItemType::Spectral => {
+            let item = next_spectral(inst, RandomSource::Shop, ante, false);
+            ShopSlot { kind, item, rarity: None, edition: Edition::None, stickers: Stickers::default() }
+        }
+        ShopItemType::PlayingCard => {
+            ShopSlot { kind, item: "", rarity: None, edition: Edition::None, stickers: Stickers::default() }
+        }
+    }
+}
+
+/// Simulate slots `[0, n)` on a fresh sub-Instance and return them.
+pub fn shop_slots(seed: &str, ante: i32, n: usize) -> Vec<ShopSlot> {
+    let mut sub = Instance::new(seed);
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n { out.push(next_shop_item(&mut sub, ante)); }
+    out
+}
+
+// =========================================================================
+// Standard-pack cards — mirrors functions.cl:25–81.
+// =========================================================================
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seal { None, Red, Blue, Gold, Purple }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StandardCard {
+    pub base: &'static str,
+    pub enhancement: Option<&'static str>,
+    pub edition: Edition,
+    pub seal: Seal,
+}
+
+pub fn standard_enhancement(inst: &mut Instance, ante: i32) -> Option<&'static str> {
+    let key = NodeKey::with_ante(RandomType::StandardHasEnhancement, RandomSource::Null, ante);
+    if inst.random(key) <= 0.6 { return None; }
+    Some(inst.rand_choice_common(RandomType::Enhancement, RandomSource::Standard, ante, ENHANCEMENTS))
+}
+
+pub fn standard_base(inst: &mut Instance, ante: i32) -> &'static str {
+    inst.rand_choice_common(RandomType::Card, RandomSource::Standard, ante, CARDS)
+}
+
+pub fn standard_edition(inst: &mut Instance, ante: i32) -> Edition {
+    let key = NodeKey::with_ante(RandomType::StandardEdition, RandomSource::Null, ante);
+    let v = inst.random(key);
+    if v > 0.988 { Edition::Polychrome }
+    else if v > 0.96 { Edition::Holographic }
+    else if v > 0.92 { Edition::Foil }
+    else { Edition::None }
+}
+
+pub fn standard_seal(inst: &mut Instance, ante: i32) -> Seal {
+    let key = NodeKey::with_ante(RandomType::StandardHasSeal, RandomSource::Null, ante);
+    if inst.random(key) <= 0.8 { return Seal::None; }
+    let k2 = NodeKey::with_ante(RandomType::StandardSeal, RandomSource::Null, ante);
+    let v = inst.random(k2);
+    if v > 0.75 { Seal::Red }
+    else if v > 0.5 { Seal::Blue }
+    else if v > 0.25 { Seal::Gold }
+    else { Seal::Purple }
+}
+
+pub fn standard_card(inst: &mut Instance, ante: i32) -> StandardCard {
+    let enhancement = standard_enhancement(inst, ante);
+    let base = standard_base(inst, ante);
+    let edition = standard_edition(inst, ante);
+    let seal = standard_seal(inst, ante);
+    StandardCard { base, enhancement, edition, seal }
+}
+
+pub fn open_standard(inst: &mut Instance, size: usize, ante: i32) -> Vec<StandardCard> {
+    let mut out = Vec::with_capacity(size);
+    for _ in 0..size { out.push(standard_card(inst, ante)); }
+    out
+}
+
+/// Variant of `open_pack` that fills Standard-pack contents in detail.
+pub fn open_pack_detailed(inst: &mut Instance, pack: &str, ante: i32) -> PackContents {
+    match pack {
+        "Standard Pack"        => PackContents::StandardCards(open_standard(inst, 3, ante)),
+        "Jumbo Standard Pack"  => PackContents::StandardCards(open_standard(inst, 5, ante)),
+        "Mega Standard Pack"   => PackContents::StandardCards(open_standard(inst, 5, ante)),
+        other => open_pack(inst, other, ante),
+    }
+}
+
+// =========================================================================
+// Forced-joker resolution — Soul → Legendary, Wraith → Rare.
+// =========================================================================
+
+pub fn resolve_soul_legendary(inst: &mut Instance, ante: i32) -> &'static str {
+    next_joker(inst, RandomSource::Soul, ante)
+}
+pub fn resolve_wraith_rare(inst: &mut Instance, ante: i32) -> &'static str {
+    next_joker(inst, RandomSource::Wraith, ante)
 }
 
 #[cfg(test)]
