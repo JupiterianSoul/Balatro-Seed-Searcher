@@ -493,6 +493,8 @@ export default function App(): React.JSX.Element {
               isPaused={isPaused}
               isDone={isDone}
               filter={filter}
+              deckName={DECK_NAMES[config.deckIdx] ?? 'Unknown deck'}
+              stakeName={STAKE_NAMES[config.stakeIdx] ?? 'Unknown stake'}
               onStart={handleStart}
               onStop={handleStop}
               onPause={handlePause}

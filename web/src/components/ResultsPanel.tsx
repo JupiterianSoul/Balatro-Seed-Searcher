@@ -74,6 +74,8 @@ export type ResultsPanelProps = {
   isPaused: boolean;
   isDone: boolean;
   filter: Filter;
+  deckName: string;
+  stakeName: string;
   onStart: () => void;
   onStop: () => void;
   onPause: () => void;
@@ -90,6 +92,8 @@ export function ResultsPanel({
   isPaused,
   isDone,
   filter,
+  deckName,
+  stakeName,
   onStart,
   onStop,
   onPause,
@@ -113,6 +117,12 @@ export function ResultsPanel({
       <div className="results-stats card-header">
         <h2 className="card-title">Results</h2>
         <div className="stats-chips">
+          <span
+            className="chip chip--context"
+            title="Deck and stake the seeds below are being matched against. If these don't match what you intended, change them in the left sidebar and search again."
+          >
+            <strong>{deckName}</strong> · {stakeName}
+          </span>
           <span className="chip">
             <strong>{formatNumber(seedsPerSec)}</strong> seeds/sec
           </span>

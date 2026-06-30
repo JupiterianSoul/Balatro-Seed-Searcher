@@ -529,6 +529,12 @@ a { color: inherit; }
   background: var(--accent-dim);
 }
 .chip--accent strong { color: var(--accent-light); }
+.chip--context {
+  border-color: var(--border-strong, var(--border-subtle));
+  background: rgba(255, 255, 255, 0.04);
+  cursor: help;
+}
+.chip--context strong { color: var(--text-primary); letter-spacing: 0.01em; }
 
 .results-controls {
   display: flex;

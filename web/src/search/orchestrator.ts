@@ -31,8 +31,44 @@ import type {
 } from '../types';
 
 // Total seed space: ranks 0 to 2^52 - 1 (Balatro uses 8-char base-36 seeds ≈ 2^41.4
-// but the engine accepts a continuous rank range; we default to 2^32 for practical searching)
+// but the engine accepts a continuous rank range; we default to 2 billion for
+// practical searching)
 export const DEFAULT_SEARCH_SPACE = 2_000_000_000n; // 2 billion as a practical default
+
+// 8-char seeds in base-35 — the engine's full enumeration domain.
+// Used to wrap the per-run random starting offset so we never index outside
+// representable seeds.
+const FULL_SEED_DOMAIN_8 = 35n ** 8n; // ≈ 2.25e12
+
+/**
+ * Pick a random starting rank for a fresh search.
+ *
+ * Without this, every run starts at rank 0 (= seed "11111111") and walks
+ * forward 2 billion ranks. Because 35^5 ≈ 52 million, the entire 2-billion
+ * window stays inside seeds whose first three characters are "111". The user
+ * sees "every result starts with the same letters".
+ *
+ * The randomized offset spreads the searched window across the full 8-char
+ * seed space, so consecutive runs hit different prefixes and the results
+ * look like the diverse set you get from a real seed finder.
+ *
+ * We keep the search CONTIGUOUS from the offset (rather than sampling
+ * random seeds individually) so worker partitioning, dedup-by-rank, and
+ * the rank-ordered top-N stay correct. The contiguity is invisible to the
+ * user because the offset varies between runs.
+ */
+function randomStartRank(searchSpace: bigint): bigint {
+  // crypto.getRandomValues gives us a uniform 64-bit value we then fold into
+  // the available range. We subtract `searchSpace` so the run never tries to
+  // index past the end of the 8-char domain — which would wrap inside the
+  // engine and silently report duplicate seeds.
+  const usable = FULL_SEED_DOMAIN_8 > searchSpace
+    ? FULL_SEED_DOMAIN_8 - searchSpace
+    : 1n;
+  const buf = new BigUint64Array(1);
+  crypto.getRandomValues(buf);
+  return buf[0] % usable;
+}
 
 export type OrchestratorEventMap = {
   match: OrchestratorMatchEvent;
@@ -105,6 +141,10 @@ export class SearchOrchestrator {
       }
     } catch { /* no-op */ }
 
+    // Random starting rank so successive searches don't all hammer the
+    // same low-rank prefix. See randomStartRank() above for the rationale.
+    const startOffset = randomStartRank(this.searchSpace);
+
     if (canThread) {
       // THREADED MODE — single worker, single WASM heap, rayon inside.
       this.workerCount = 1;
@@ -117,7 +157,7 @@ export class SearchOrchestrator {
       const scanMsg: WorkerInboundScan = {
         type: 'scan',
         filter,
-        startRank: 0n,
+        startRank: startOffset,
         count: this.searchSpace,
         seedLen: config.seedLen,
         deckIdx: config.deckIdx,
@@ -141,8 +181,9 @@ export class SearchOrchestrator {
           type: 'module',
         });
 
-        const startRank = BigInt(i) * sliceSize;
-        const count = i === concurrency - 1 ? this.searchSpace - startRank : sliceSize;
+        const sliceLocal = BigInt(i) * sliceSize;
+        const startRank = startOffset + sliceLocal;
+        const count = i === concurrency - 1 ? this.searchSpace - sliceLocal : sliceSize;
 
         worker.addEventListener('message', (event: MessageEvent<WorkerOutbound>) => {
           this.handleWorkerMessage(event.data);
